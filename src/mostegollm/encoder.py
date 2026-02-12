@@ -173,13 +173,22 @@ def encode(
     generated_token_ids: list[int] = []
     tokens_generated = 0
 
-    # Generate tokens until we have consumed all secret bits plus PRECISION
-    # padding bits (to fully flush the encoder state).
-    while bit_pos <= total_bits + PRECISION:
+    # Track how many bits the decoder would emit during renormalization.
+    # The decoder emits bits when MSBs match (1 + pending), and increments
+    # pending on straddle conditions.  The encoder must keep generating tokens
+    # until the decoder has emitted at least `total_bits` bits — otherwise
+    # the decoder's flush will produce canonical interval-identifying bits
+    # that may not match the original secret bits.
+    bits_emitted = 0
+    decoder_pending = 0
+
+    # Generate tokens until the decoder would have emitted all secret bits
+    # during its renormalization (not counting the flush).
+    while bits_emitted < total_bits:
         if tokens_generated >= MAX_TOKENS:
             raise StegoEncodeError(
                 f"Exceeded maximum token limit ({MAX_TOKENS}) before encoding all data. "
-                f"Consumed {min(bit_pos, total_bits)}/{total_bits} bits."
+                f"Emitted {bits_emitted}/{total_bits} bits."
             )
 
         # Get distribution at current position
@@ -211,18 +220,23 @@ def encode(
         low = sym_low
         high = sym_high
 
-        # Renormalize: shift out matching MSBs and read new bits into value
+        # Renormalize: shift out matching MSBs and read new bits into value.
+        # Mirror the decoder's bit-emission logic to track committed bits.
         while True:
             if high <= HALF:
-                # Both low and high in lower half — shift out a 0
-                pass
+                # Both low and high in lower half — decoder emits 0 + pending 1s
+                bits_emitted += 1 + decoder_pending
+                decoder_pending = 0
             elif low >= HALF:
-                # Both in upper half — shift out a 1, subtract HALF
+                # Both in upper half — decoder emits 1 + pending 0s
+                bits_emitted += 1 + decoder_pending
+                decoder_pending = 0
                 value -= HALF
                 low -= HALF
                 high -= HALF
             elif low >= QUARTER and high <= 3 * QUARTER:
-                # Straddle the middle — subtract QUARTER
+                # Straddle the middle — decoder increments pending
+                decoder_pending += 1
                 value -= QUARTER
                 low -= QUARTER
                 high -= QUARTER

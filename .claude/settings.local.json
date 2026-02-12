@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip show:*)",
+      "Bash(uv venv:*)",
+      "Bash(pytest:*)",
+      "Bash(uv:*)",
+      "Bash(python:*)",
+      "WebFetch(domain:docs.astral.sh)",
+      "Bash(nvidia-smi:*)",
+      "Bash(findstr:*)",
+      "Bash(git -C C:UsersjohnlprojectsMoStegoLLM status)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nConfigure uv to install CUDA-enabled PyTorch and include project updates\n\nAdd uv index and source configuration for PyTorch CUDA 12.8 wheels on\nLinux/Windows, so GPU acceleration works by default when available.\nAlso includes encoder bit-tracking improvements and project config files.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")"
+    ]
+  }
+}
