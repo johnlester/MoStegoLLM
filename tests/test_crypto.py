@@ -55,6 +55,26 @@ class TestEncryptedRoundTrip:
         cover = codec_encrypted.encode(secret)
         assert codec_encrypted.decode(cover) == secret
 
+    def test_long_classified_message(self, codec_encrypted: StegoCodec) -> None:
+        secret = (
+            "EYES ONLY — CIPHER BRANCH SEVEN — PRIORITY ALPHA\n"
+            "Transmission Origin: Station Wren / Routing: Lisbon → Vienna"
+            " → Dead Drop Edelweiss\n"
+            "\n"
+            "VERMILION,\n"
+            "The nightingale has stopped singing in the garden. You will"
+            " know what this means. We have little time and the courier"
+            " window is narrowing faster than anticipated — OVERCOAT's"
+            " people have been watching the postal routes since Tuesday,"
+            " and the man we had at the bridge is no longer answering his"
+            " telephone. I do not need to tell you what that suggests.\n"
+            "Burn this. Then burn the ash.\n"
+            "— CROW\n"
+        )
+        cover = codec_encrypted.encode_str(secret)
+        recovered = codec_encrypted.decode_str(cover)
+        assert recovered == secret
+
     def test_wrong_password_decode_fails(self, codec_encrypted: StegoCodec) -> None:
         cover = codec_encrypted.encode(b"data")
         wrong_pw_codec = StegoCodec(device="cpu", password="wrong-password")
