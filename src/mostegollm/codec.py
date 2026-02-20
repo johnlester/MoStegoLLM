@@ -8,6 +8,7 @@ from typing import Union
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
+from .crypto import decrypt as _decrypt, encrypt as _encrypt
 from .decoder import decode as _decode
 from .encoder import TOP_K, encode as _encode
 from .model import DEFAULT_PROMPT, PRIMARY_MODEL, ModelInfo, get_model_info, list_models, load_model
@@ -47,6 +48,9 @@ class StegoCodec:
             boundary (``.``, ``!``, or ``?``).
         token: HuggingFace API token for gated models.  When ``None``,
             falls back to the ``HF_TOKEN`` environment variable / ``.env``.
+        password: Optional password for AES-256-GCM encryption.  When set,
+            data is encrypted before encoding and decrypted after decoding,
+            adding a confidentiality layer on top of steganographic hiding.
     """
 
     def __init__(
@@ -58,6 +62,7 @@ class StegoCodec:
         temperature: float = 1.0,
         sentence_boundary: bool = False,
         token: str | None = None,
+        password: str | None = None,
     ) -> None:
         self._model_name = model_name
         self._device_str = device
@@ -66,6 +71,7 @@ class StegoCodec:
         self._temperature = temperature
         self._sentence_boundary = sentence_boundary
         self._token = token
+        self._password = password
 
         # Lazy-loaded on first use
         self._model: PreTrainedModel | None = None
@@ -118,6 +124,8 @@ class StegoCodec:
             StegoEncodeError: If encoding fails.
             StegoModelError: If the model cannot be loaded.
         """
+        if self._password is not None:
+            data = _encrypt(data, self._password)
         model, tokenizer, device = self._ensure_model()
         cover_text, _token_ids, _total_bits = _encode(
             data,
@@ -142,10 +150,11 @@ class StegoCodec:
 
         Raises:
             StegoDecodeError: If decoding fails (wrong prompt, corrupted text, …).
+            StegoCryptoError: If decryption fails (wrong password, tampered data).
             StegoModelError: If the model cannot be loaded.
         """
         model, tokenizer, device = self._ensure_model()
-        return _decode(
+        payload = _decode(
             cover_text,
             model=model,
             tokenizer=tokenizer,
@@ -154,6 +163,9 @@ class StegoCodec:
             top_k=self._top_k,
             temperature=self._temperature,
         )
+        if self._password is not None:
+            payload = _decrypt(payload, self._password)
+        return payload
 
     # ------------------------------------------------------------------
     # Convenience helpers
@@ -222,6 +234,9 @@ class StegoCodec:
             A :class:`~mostegollm.utils.StegoStats` with the cover text and
             encoding statistics.
         """
+        original_size = len(data)
+        if self._password is not None:
+            data = _encrypt(data, self._password)
         model, tokenizer, device = self._ensure_model()
         cover_text, token_ids, total_bits = _encode(
             data,
@@ -241,5 +256,5 @@ class StegoCodec:
             cover_text=cover_text,
             bits_per_token=bits_per_token,
             total_tokens=total_tokens,
-            payload_size_bytes=len(data),
+            payload_size_bytes=original_size,
         )

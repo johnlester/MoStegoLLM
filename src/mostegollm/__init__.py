@@ -15,6 +15,7 @@ Example::
 
 from .codec import StegoCodec
 from .utils import (
+    StegoCryptoError,
     StegoDecodeError,
     StegoEncodeError,
     StegoError,
@@ -24,6 +25,7 @@ from .utils import (
 
 __all__ = [
     "StegoCodec",
+    "StegoCryptoError",
     "StegoDecodeError",
     "StegoEncodeError",
     "StegoError",

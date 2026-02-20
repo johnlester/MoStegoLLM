@@ -23,3 +23,9 @@ def codec_alt_prompt() -> StegoCodec:
 def codec_sentence_boundary() -> StegoCodec:
     """Codec with sentence_boundary=True for sentence-ending tests."""
     return StegoCodec(device="cpu", sentence_boundary=True)
+
+
+@pytest.fixture(scope="session")
+def codec_encrypted() -> StegoCodec:
+    """Codec with AES-256-GCM encryption enabled."""
+    return StegoCodec(device="cpu", password="test-password")

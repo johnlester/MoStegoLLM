@@ -26,6 +26,10 @@ class StegoModelError(StegoError):
     """Raised when model loading or inference fails."""
 
 
+class StegoCryptoError(StegoError):
+    """Raised when encryption or decryption fails (wrong password, tampered data)."""
+
+
 # ---------------------------------------------------------------------------
 # Header format
 # ---------------------------------------------------------------------------
