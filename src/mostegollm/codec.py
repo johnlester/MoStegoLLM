@@ -21,6 +21,10 @@ from .utils import (
 )
 
 
+DEFAULT_CHUNK_SIZE = 2000  # bytes of plaintext per chunk
+DEFAULT_CONTEXT_SIZE = 500  # characters of prior cover text used as prompt for next chunk
+
+
 class StegoCodec:
     """Steganographic codec that hides binary data in LLM-generated text.
 
@@ -219,6 +223,141 @@ class StegoCodec:
         """
         data = self.decode(cover_text)
         pathlib.Path(output_path).write_bytes(data)
+
+    # ------------------------------------------------------------------
+    # Chunked (long data) API
+    # ------------------------------------------------------------------
+
+    def encode_long(
+        self,
+        data: bytes,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        context_size: int = DEFAULT_CONTEXT_SIZE,
+    ) -> list[str]:
+        """Encode arbitrarily large data by splitting it into independently encoded chunks.
+
+        Each chunk is encoded as a standalone steganographic message.  When
+        ``password`` is set, each chunk is encrypted independently (separate
+        salt/nonce).  Consecutive chunks use the tail of the previous chunk's
+        cover text as the prompt so that the generated prose reads coherently.
+
+        Args:
+            data: Arbitrary bytes to hide.
+            chunk_size: Maximum plaintext bytes per chunk (before encryption).
+            context_size: Number of trailing characters from the previous
+                chunk's cover text to use as the prompt for the next chunk.
+
+        Returns:
+            A list of cover-text strings, one per chunk.
+        """
+        model, tokenizer, device = self._ensure_model()
+
+        # Split plaintext into chunks, then optionally encrypt each one.
+        chunks: list[bytes] = [
+            data[i : i + chunk_size] for i in range(0, len(data), chunk_size)
+        ]
+        if self._password is not None:
+            chunks = [_encrypt(chunk, self._password) for chunk in chunks]
+
+        cover_texts: list[str] = []
+        for idx, chunk in enumerate(chunks):
+            prompt = (
+                self._prompt
+                if idx == 0
+                else cover_texts[idx - 1][-context_size:]
+            )
+            cover_text, _token_ids, _total_bits = _encode(
+                chunk,
+                model=model,
+                tokenizer=tokenizer,
+                device=device,
+                prompt=prompt,
+                top_k=self._top_k,
+                temperature=self._temperature,
+                sentence_boundary=self._sentence_boundary,
+            )
+            cover_texts.append(cover_text)
+
+        return cover_texts
+
+    def decode_long(
+        self,
+        cover_texts: list[str],
+        context_size: int = DEFAULT_CONTEXT_SIZE,
+    ) -> bytes:
+        """Decode a list of cover texts produced by :meth:`encode_long`.
+
+        Args:
+            cover_texts: Cover-text strings in the same order produced by
+                :meth:`encode_long`.
+            context_size: Must match the value used during encoding.
+
+        Returns:
+            The original binary payload.
+        """
+        model, tokenizer, device = self._ensure_model()
+
+        payloads: list[bytes] = []
+        for idx, cover_text in enumerate(cover_texts):
+            prompt = (
+                self._prompt
+                if idx == 0
+                else cover_texts[idx - 1][-context_size:]
+            )
+            payload = _decode(
+                cover_text,
+                model=model,
+                tokenizer=tokenizer,
+                device=device,
+                prompt=prompt,
+                top_k=self._top_k,
+                temperature=self._temperature,
+            )
+            if self._password is not None:
+                payload = _decrypt(payload, self._password)
+            payloads.append(payload)
+
+        return b"".join(payloads)
+
+    def encode_long_str(
+        self,
+        text: str,
+        encoding: str = "utf-8",
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        context_size: int = DEFAULT_CONTEXT_SIZE,
+    ) -> list[str]:
+        """Encode a string using chunked encoding.
+
+        Args:
+            text: The string to encode.
+            encoding: Character encoding (default ``utf-8``).
+            chunk_size: Maximum plaintext bytes per chunk.
+            context_size: Trailing characters used as prompt for next chunk.
+
+        Returns:
+            A list of cover-text strings, one per chunk.
+        """
+        return self.encode_long(
+            text.encode(encoding), chunk_size=chunk_size, context_size=context_size
+        )
+
+    def decode_long_str(
+        self,
+        cover_texts: list[str],
+        encoding: str = "utf-8",
+        context_size: int = DEFAULT_CONTEXT_SIZE,
+    ) -> str:
+        """Decode chunked cover texts back to a string.
+
+        Args:
+            cover_texts: Cover-text strings produced by :meth:`encode_long_str`.
+            encoding: Character encoding (default ``utf-8``).
+            context_size: Must match the value used during encoding.
+
+        Returns:
+            The original string.
+        """
+        return self.decode_long(cover_texts, context_size=context_size).decode(encoding)
 
     # ------------------------------------------------------------------
     # Diagnostics

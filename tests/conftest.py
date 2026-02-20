@@ -14,18 +14,35 @@ def codec() -> StegoCodec:
 
 
 @pytest.fixture(scope="session")
-def codec_alt_prompt() -> StegoCodec:
+def codec_alt_prompt(codec: StegoCodec) -> StegoCodec:
     """Codec with a different prompt for cross-prompt tests."""
-    return StegoCodec(device="cpu", prompt="Once upon a time in a faraway land,")
+    c = StegoCodec(device="cpu", prompt="Once upon a time in a faraway land,")
+    model, tokenizer, device = codec._ensure_model()
+    c._model = model
+    c._tokenizer = tokenizer
+    c._device = device
+    return c
 
 
 @pytest.fixture(scope="session")
-def codec_sentence_boundary() -> StegoCodec:
+def codec_sentence_boundary(codec: StegoCodec) -> StegoCodec:
     """Codec with sentence_boundary=True for sentence-ending tests."""
-    return StegoCodec(device="cpu", sentence_boundary=True)
+    c = StegoCodec(device="cpu", sentence_boundary=True)
+    model, tokenizer, device = codec._ensure_model()
+    c._model = model
+    c._tokenizer = tokenizer
+    c._device = device
+    return c
 
 
 @pytest.fixture(scope="session")
-def codec_encrypted() -> StegoCodec:
-    """Codec with AES-256-GCM encryption enabled."""
-    return StegoCodec(device="cpu", password="test-password")
+def codec_encrypted(codec: StegoCodec) -> StegoCodec:
+    """Codec with AES-256-GCM encryption enabled, sharing the model from *codec*."""
+    c = StegoCodec(device="cpu", password="test-password")
+    # Force model load on the base codec and share the instance to avoid loading
+    # a second copy (which introduces non-determinism on some platforms).
+    model, tokenizer, device = codec._ensure_model()
+    c._model = model
+    c._tokenizer = tokenizer
+    c._device = device
+    return c
