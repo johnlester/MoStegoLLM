@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
+from transformers.cache_utils import DynamicCache
 
 from .utils import (
     StegoEncodeError,
@@ -35,7 +36,8 @@ def _get_token_distribution(
     device: torch.device,
     top_k: int = TOP_K,
     temperature: float = 1.0,
-) -> tuple[list[int], list[int]]:
+    past_key_values: DynamicCache | None = None,
+) -> tuple[list[int], list[int], DynamicCache]:
     """Get the top-k token distribution from the model.
 
     Returns token IDs and their corresponding integer-scaled cumulative
@@ -43,19 +45,22 @@ def _get_token_distribution(
 
     Args:
         model: The language model.
-        input_ids: Current token sequence (batch_size=1).
+        input_ids: Current token sequence (batch_size=1), or a single token
+            when ``past_key_values`` is provided.
         device: Torch device.
         top_k: Number of top tokens to consider.
         temperature: Temperature for softmax (1.0 = no change).
+        past_key_values: Optional KV-cache from a previous forward pass.
 
     Returns:
-        A tuple of (token_ids, cum_probs) where:
+        A tuple of (token_ids, cum_probs, past_key_values) where:
         - token_ids: list of top-k token IDs sorted by probability (descending)
         - cum_probs: list of cumulative probability boundaries scaled to [0, WHOLE),
           with length len(token_ids) + 1 (starts at 0, ends at WHOLE).
+        - past_key_values: Updated KV-cache for subsequent calls.
     """
     with torch.no_grad():
-        outputs = model(input_ids)
+        outputs = model(input_ids, past_key_values=past_key_values, use_cache=True)
         logits = outputs.logits[0, -1, :]  # Last position logits
 
     # Apply temperature
@@ -101,7 +106,7 @@ def _get_token_distribution(
                 cum_probs = cum_probs[: i + 1]
                 break
 
-    return token_ids, cum_probs
+    return token_ids, cum_probs, outputs.past_key_values
 
 
 def encode(
@@ -159,7 +164,8 @@ def encode(
 
     # Tokenize the prompt
     prompt_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
-    input_ids = prompt_ids.clone()
+    next_input = prompt_ids.clone()
+    past_kv: DynamicCache | None = None
 
     # --- Arithmetic coding state (decoder side) ---
     low = 0
@@ -192,8 +198,9 @@ def encode(
             )
 
         # Get distribution at current position
-        token_ids, cum_probs = _get_token_distribution(
-            model, input_ids, device, top_k=top_k, temperature=temperature
+        token_ids, cum_probs, past_kv = _get_token_distribution(
+            model, next_input, device, top_k=top_k, temperature=temperature,
+            past_key_values=past_kv,
         )
         n_tokens = len(token_ids)
         range_size = high - low
@@ -251,9 +258,25 @@ def encode(
         # Append chosen token
         chosen_token_id = token_ids[chosen_idx]
         generated_token_ids.append(chosen_token_id)
-        new_token = torch.tensor([[chosen_token_id]], device=device)
-        input_ids = torch.cat([input_ids, new_token], dim=1)
+        next_input = torch.tensor([[chosen_token_id]], device=device)
         tokens_generated += 1
+
+        # Check whether the decoder's flush would correctly produce the
+        # remaining secret bits.  Renormalization can stall when the interval
+        # keeps straddling the midpoint (incrementing decoder_pending without
+        # advancing bits_emitted).  The flush emits 1 + (decoder_pending + 1)
+        # deterministic bits based on the final interval; if those bits match
+        # what we still need, we can stop — the decoder will recover all data.
+        if bits_emitted < total_bits:
+            remaining = total_bits - bits_emitted
+            flush_pending = decoder_pending + 1
+            if 1 + flush_pending >= remaining:
+                if low < QUARTER:
+                    flush_bits = [0] + [1] * flush_pending
+                else:
+                    flush_bits = [1] + [0] * flush_pending
+                if flush_bits[:remaining] == bits[bits_emitted:total_bits]:
+                    break
 
     # Decode generated tokens to text
     cover_text = tokenizer.decode(generated_token_ids, skip_special_tokens=False)

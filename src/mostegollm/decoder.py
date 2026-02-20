@@ -66,7 +66,8 @@ def decode(
 
     # Tokenize the prompt (same as encoder)
     prompt_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
-    input_ids = prompt_ids.clone()
+    next_input = prompt_ids.clone()
+    past_kv = None
 
     # --- Arithmetic coding state (encoder/compressor side) ---
     low = 0
@@ -77,8 +78,9 @@ def decode(
     # Process each token in the cover text
     for step, token_id in enumerate(cover_token_ids):
         # Get the same distribution the encoder saw at this position
-        tok_ids, cum_probs = _get_token_distribution(
-            model, input_ids, device, top_k=top_k, temperature=temperature
+        tok_ids, cum_probs, past_kv = _get_token_distribution(
+            model, next_input, device, top_k=top_k, temperature=temperature,
+            past_key_values=past_kv,
         )
 
         # Find the index of this token in the distribution
@@ -124,8 +126,7 @@ def decode(
             high <<= 1
 
         # Advance the context (same as encoder)
-        new_token = torch.tensor([[token_id]], device=device)
-        input_ids = torch.cat([input_ids, new_token], dim=1)
+        next_input = torch.tensor([[token_id]], device=device)
 
     # Flush remaining state: emit one more disambiguating bit plus pending
     pending += 1

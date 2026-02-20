@@ -30,6 +30,9 @@ dependencies = [
     "numpy>=1.24.0",
 ]
 
+[project.scripts]
+mostegollm = "mostegollm.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",

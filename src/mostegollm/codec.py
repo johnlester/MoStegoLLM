@@ -35,8 +35,8 @@ class StegoCodec:
 
     Args:
         model_name: HuggingFace model identifier. Defaults to
-            ``meta-llama/Llama-3.2-1B``; falls back to TinyLlama if the
-            gated model is inaccessible.
+            ``HuggingFaceTB/SmolLM-135M``; falls back to TinyLlama if the
+            primary model is inaccessible.
         device: ``'auto'`` (default), ``'cpu'``, ``'cuda'``, etc.
         prompt: Seed text that prefixes every generation.  Encoder and
             decoder **must** use the same prompt.

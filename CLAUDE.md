@@ -42,7 +42,7 @@ The library implements arithmetic coding-based steganography over LLM token dist
 - **`codec.py`** — `StegoCodec`: public API, lazy-loads model on first use. Wraps encoder/decoder with convenience methods (`encode`, `decode`, `encode_str`, `decode_str`, `encode_file`, `decode_file`).
 - **`encoder.py`** — 32-bit precision arithmetic coding that maps secret bits to token selections from top-k filtered distributions. Handles interval narrowing and MSB renormalization.
 - **`decoder.py`** — Reverse of encoder: reconstructs probability intervals, determines which bits correspond to each token choice, validates header.
-- **`model.py`** — Model loading with fallback (primary: `meta-llama/Llama-3.2-1B`, fallback: `TinyLlama/TinyLlama-1.1B-Chat-v1.0`). Sets determinism via `torch.manual_seed(0)`.
+- **`model.py`** — Model loading with fallback (primary: `HuggingFaceTB/SmolLM-135M`, fallback: `TinyLlama/TinyLlama-1.1B-Chat-v1.0`). Sets determinism via `torch.manual_seed(0)`.
 - **`utils.py`** — Exception hierarchy (`StegoError` → `StegoEncodeError`/`StegoDecodeError`/`StegoModelError`), header pack/unpack, bit conversion helpers, `StegoStats` dataclass.
 
 ### Critical implementation details

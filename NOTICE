@@ -1,0 +1,14 @@
+MoStegoLLM
+Copyright (c) 2026 John Lester
+
+This project is licensed under the MIT License. See LICENSE for details.
+
+This project uses the following third-party components:
+
+---
+
+SmolLM-135M
+https://huggingface.co/HuggingFaceTB/SmolLM-135M
+Copyright (c) Hugging Face
+Licensed under the Apache License, Version 2.0
+See LICENSES/Apache-2.0.txt for the full license text.

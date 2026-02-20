@@ -8,7 +8,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, P
 from .utils import StegoModelError
 
 # Default model and fallback
-PRIMARY_MODEL = "meta-llama/Llama-3.2-1B"
+PRIMARY_MODEL = "HuggingFaceTB/SmolLM-135M"
 FALLBACK_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
 # Default prompt that seeds the generation context

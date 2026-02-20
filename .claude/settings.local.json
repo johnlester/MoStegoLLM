@@ -11,7 +11,16 @@
       "Bash(findstr:*)",
       "Bash(git -C C:UsersjohnlprojectsMoStegoLLM status)",
       "Bash(git add:*)",
-      "Bash(git commit -m \"$\\(cat <<''EOF''\nConfigure uv to install CUDA-enabled PyTorch and include project updates\n\nAdd uv index and source configuration for PyTorch CUDA 12.8 wheels on\nLinux/Windows, so GPU acceleration works by default when available.\nAlso includes encoder bit-tracking improvements and project config files.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nConfigure uv to install CUDA-enabled PyTorch and include project updates\n\nAdd uv index and source configuration for PyTorch CUDA 12.8 wheels on\nLinux/Windows, so GPU acceleration works by default when available.\nAlso includes encoder bit-tracking improvements and project config files.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(pip install:*)",
+      "Bash(mostegollm:*)",
+      "Bash(ruff check:*)",
+      "Bash(C:UsersjohnlprojectsMoStegoLLM.venvScriptsruff.exe check src/mostegollm/encoder.py src/mostegollm/decoder.py)",
+      "Bash(cmd.exe:*)",
+      "Bash(powershell.exe -Command \"& ''C:\\\\Users\\\\johnl\\\\projects\\\\MoStegoLLM\\\\.venv\\\\Scripts\\\\python.exe'' -m pytest ''C:\\\\Users\\\\johnl\\\\projects\\\\MoStegoLLM\\\\tests'' -v\")",
+      "Bash(Select-String -Pattern \"FAILED|Error|assert|StegoDecodeError|mosteg\")",
+      "Bash(Select-Object -First 30)"
     ]
   }
 }
