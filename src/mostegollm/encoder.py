@@ -26,8 +26,17 @@ QUARTER = WHOLE >> 2  # 2^30
 # Maximum tokens to generate as a safety limit
 MAX_TOKENS = 8192
 
+# Maximum extra tokens past data-recoverable to search for a sentence boundary
+MAX_EXTRA_TOKENS = 100
+
 # Top-k tokens to consider from the distribution
 TOP_K = 256
+
+
+def _is_sentence_ending(tokenizer: PreTrainedTokenizerBase, token_id: int) -> bool:
+    """Check if a token ends a sentence (its decoded text ends with . ! or ?)."""
+    text = tokenizer.decode([token_id]).rstrip()
+    return len(text) > 0 and text[-1] in ".!?"
 
 
 def _get_token_distribution(
@@ -117,6 +126,7 @@ def encode(
     prompt: str,
     top_k: int = TOP_K,
     temperature: float = 1.0,
+    sentence_boundary: bool = False,
 ) -> tuple[str, list[int], int]:
     """Encode binary data into cover text using arithmetic coding over LLM distributions.
 
@@ -134,6 +144,9 @@ def encode(
         prompt: The seed prompt (must match during decoding).
         top_k: Number of top tokens to consider per step.
         temperature: Softmax temperature.
+        sentence_boundary: If ``True``, continue generating tokens past the
+            data-recoverable point until the cover text ends at a sentence
+            boundary (``.``, ``!``, or ``?``).
 
     Returns:
         A tuple of (cover_text, generated_token_ids, total_bits_encoded) where:
@@ -190,7 +203,10 @@ def encode(
 
     # Generate tokens until the decoder would have emitted all secret bits
     # during its renormalization (not counting the flush).
-    while bits_emitted < total_bits:
+    ever_recoverable = False
+    extra_tokens = 0
+
+    while True:
         if tokens_generated >= MAX_TOKENS:
             raise StegoEncodeError(
                 f"Exceeded maximum token limit ({MAX_TOKENS}) before encoding all data. "
@@ -261,13 +277,12 @@ def encode(
         next_input = torch.tensor([[chosen_token_id]], device=device)
         tokens_generated += 1
 
-        # Check whether the decoder's flush would correctly produce the
-        # remaining secret bits.  Renormalization can stall when the interval
-        # keeps straddling the midpoint (incrementing decoder_pending without
-        # advancing bits_emitted).  The flush emits 1 + (decoder_pending + 1)
-        # deterministic bits based on the final interval; if those bits match
-        # what we still need, we can stop — the decoder will recover all data.
-        if bits_emitted < total_bits:
+        # Re-evaluate whether data is recoverable RIGHT NOW (not latched).
+        # The flush check is valid only at the instant it's evaluated — if we
+        # continue generating, the arithmetic state changes and the flush may
+        # no longer produce the right bits.  So we must re-check each iteration.
+        data_recoverable = bits_emitted >= total_bits
+        if not data_recoverable:
             remaining = total_bits - bits_emitted
             flush_pending = decoder_pending + 1
             if 1 + flush_pending >= remaining:
@@ -276,7 +291,24 @@ def encode(
                 else:
                     flush_bits = [1] + [0] * flush_pending
                 if flush_bits[:remaining] == bits[bits_emitted:total_bits]:
-                    break
+                    data_recoverable = True
+
+        if not data_recoverable:
+            continue
+
+        # Data is currently recoverable — decide whether to stop.
+        if not sentence_boundary:
+            break
+
+        if _is_sentence_ending(tokenizer, chosen_token_id):
+            break
+
+        # Track tokens since we first became recoverable for the safety limit.
+        if not ever_recoverable:
+            ever_recoverable = True
+        extra_tokens += 1
+        if extra_tokens >= MAX_EXTRA_TOKENS:
+            break
 
     # Decode generated tokens to text
     cover_text = tokenizer.decode(generated_token_ids, skip_special_tokens=False)

@@ -17,3 +17,9 @@ def codec() -> StegoCodec:
 def codec_alt_prompt() -> StegoCodec:
     """Codec with a different prompt for cross-prompt tests."""
     return StegoCodec(device="cpu", prompt="Once upon a time in a faraway land,")
+
+
+@pytest.fixture(scope="session")
+def codec_sentence_boundary() -> StegoCodec:
+    """Codec with sentence_boundary=True for sentence-ending tests."""
+    return StegoCodec(device="cpu", sentence_boundary=True)

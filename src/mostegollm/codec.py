@@ -42,6 +42,9 @@ class StegoCodec:
             decoder **must** use the same prompt.
         top_k: Number of most-probable tokens considered at each step.
         temperature: Softmax temperature (``1.0`` = unmodified).
+        sentence_boundary: If ``True``, continue generating tokens past the
+            data-recoverable point until the cover text ends at a sentence
+            boundary (``.``, ``!``, or ``?``).
     """
 
     def __init__(
@@ -51,12 +54,14 @@ class StegoCodec:
         prompt: str = DEFAULT_PROMPT,
         top_k: int = TOP_K,
         temperature: float = 1.0,
+        sentence_boundary: bool = False,
     ) -> None:
         self._model_name = model_name
         self._device_str = device
         self._prompt = prompt
         self._top_k = top_k
         self._temperature = temperature
+        self._sentence_boundary = sentence_boundary
 
         # Lazy-loaded on first use
         self._model: PreTrainedModel | None = None
@@ -104,6 +109,7 @@ class StegoCodec:
             prompt=self._prompt,
             top_k=self._top_k,
             temperature=self._temperature,
+            sentence_boundary=self._sentence_boundary,
         )
         return cover_text
 
@@ -207,6 +213,7 @@ class StegoCodec:
             prompt=self._prompt,
             top_k=self._top_k,
             temperature=self._temperature,
+            sentence_boundary=self._sentence_boundary,
         )
         total_tokens = len(token_ids)
         payload_bits = total_bits - HEADER_BITS

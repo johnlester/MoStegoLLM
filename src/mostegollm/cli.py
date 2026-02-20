@@ -34,6 +34,12 @@ def _build_parser() -> argparse.ArgumentParser:
     enc.add_argument("text", nargs="?", default=None, help="string to encode")
     enc.add_argument("-f", "--file", default=None, help="file to encode")
     enc.add_argument("-o", "--output", default=None, help="write cover text to file")
+    enc.add_argument(
+        "--sentence-boundary",
+        action="store_true",
+        default=False,
+        help="continue generating until cover text ends at a sentence boundary",
+    )
 
     # -- decode --------------------------------------------------------
     dec = sub.add_parser("decode", help="decode cover text back to secret data")
@@ -140,11 +146,13 @@ def main(argv: list[str] | None = None) -> None:
         _log(f"Loading model: {args.model}")
 
     t_model = time.perf_counter()
+    sentence_boundary = getattr(args, "sentence_boundary", False)
     codec = StegoCodec(
         model_name=args.model,
         device=args.device,
         prompt=args.prompt,
         top_k=args.top_k,
+        sentence_boundary=sentence_boundary,
     )
     # Force model load so we can report timing
     codec._ensure_model()
