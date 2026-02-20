@@ -10,7 +10,7 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from .decoder import decode as _decode
 from .encoder import TOP_K, encode as _encode
-from .model import DEFAULT_PROMPT, PRIMARY_MODEL, load_model
+from .model import DEFAULT_PROMPT, PRIMARY_MODEL, ModelInfo, get_model_info, list_models, load_model
 from .utils import (
     HEADER_BITS,
     StegoDecodeError,
@@ -71,6 +71,20 @@ class StegoCodec:
         self._model: PreTrainedModel | None = None
         self._tokenizer: PreTrainedTokenizerBase | None = None
         self._device: torch.device | None = None
+
+    # ------------------------------------------------------------------
+    # Model registry
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def list_models(cls) -> tuple[ModelInfo, ...]:
+        """Return metadata for all recommended models."""
+        return list_models()
+
+    @classmethod
+    def get_model_info(cls, model_name: str) -> ModelInfo | None:
+        """Look up a model by name. Returns ``None`` if not in the registry."""
+        return get_model_info(model_name)
 
     # ------------------------------------------------------------------
     # Lazy model loading

@@ -149,7 +149,7 @@ def load_model(
             tokenizer = AutoTokenizer.from_pretrained(name, token=hf_token)
             model = AutoModelForCausalLM.from_pretrained(
                 name,
-                torch_dtype=torch.float32,  # float32 for determinism
+                dtype=torch.float32,  # float32 for determinism
                 token=hf_token,
             )
             model = model.to(resolved_device)
