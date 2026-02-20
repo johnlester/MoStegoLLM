@@ -8,7 +8,7 @@ import time
 
 from .codec import StegoCodec
 from .encoder import TOP_K
-from .model import DEFAULT_PROMPT, PRIMARY_MODEL
+from .model import DEFAULT_PROMPT, MODEL_REGISTRY, PRIMARY_MODEL
 from .utils import StegoError
 
 
@@ -41,6 +41,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="continue generating until cover text ends at a sentence boundary",
     )
 
+    # -- models --------------------------------------------------------
+    sub.add_parser("models", help="list recommended models")
+
     # -- decode --------------------------------------------------------
     dec = sub.add_parser("decode", help="decode cover text back to secret data")
     dec.add_argument("text", nargs="?", default=None, help="cover text to decode")
@@ -71,6 +74,20 @@ def _read_input(args: argparse.Namespace) -> str | bytes:
         return sys.stdin.read()
     print(f"mostegollm {args.command}: no input (pass a string, -f FILE, or pipe stdin)", file=sys.stderr)
     sys.exit(1)
+
+
+def _cmd_models() -> None:
+    """Print a formatted table of recommended models."""
+    name_w = max(len(m.name) for m in MODEL_REGISTRY)
+    param_w = max(len(m.parameters) for m in MODEL_REGISTRY)
+
+    header = f"  {'Model':<{name_w}}  {'Params':<{param_w}}  Description"
+    print(header)
+    print("  " + "-" * (len(header) - 2))
+
+    for m in MODEL_REGISTRY:
+        gated = " [gated]" if m.gated else ""
+        print(f"  {m.name:<{name_w}}  {m.parameters:<{param_w}}  {m.description}{gated}")
 
 
 def _cmd_encode(codec: StegoCodec, args: argparse.Namespace, verbose: bool) -> None:
@@ -130,6 +147,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.command is None:
         parser.print_help()
         sys.exit(1)
+
+    if args.command == "models":
+        _cmd_models()
+        return
 
     verbose = args.verbose
 

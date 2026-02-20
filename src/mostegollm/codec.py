@@ -45,6 +45,8 @@ class StegoCodec:
         sentence_boundary: If ``True``, continue generating tokens past the
             data-recoverable point until the cover text ends at a sentence
             boundary (``.``, ``!``, or ``?``).
+        token: HuggingFace API token for gated models.  When ``None``,
+            falls back to the ``HF_TOKEN`` environment variable / ``.env``.
     """
 
     def __init__(
@@ -55,6 +57,7 @@ class StegoCodec:
         top_k: int = TOP_K,
         temperature: float = 1.0,
         sentence_boundary: bool = False,
+        token: str | None = None,
     ) -> None:
         self._model_name = model_name
         self._device_str = device
@@ -62,6 +65,7 @@ class StegoCodec:
         self._top_k = top_k
         self._temperature = temperature
         self._sentence_boundary = sentence_boundary
+        self._token = token
 
         # Lazy-loaded on first use
         self._model: PreTrainedModel | None = None
@@ -76,7 +80,7 @@ class StegoCodec:
         """Load the model/tokenizer on first use and return them."""
         if self._model is None:
             self._model, self._tokenizer, self._device = load_model(
-                self._model_name, self._device_str
+                self._model_name, self._device_str, token=self._token
             )
         assert self._model is not None
         assert self._tokenizer is not None

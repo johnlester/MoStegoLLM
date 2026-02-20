@@ -14,6 +14,7 @@ Example::
 """
 
 from .codec import StegoCodec
+from .model import ModelInfo, get_model_info, list_models
 from .utils import (
     StegoDecodeError,
     StegoEncodeError,
@@ -23,10 +24,13 @@ from .utils import (
 )
 
 __all__ = [
+    "ModelInfo",
     "StegoCodec",
     "StegoDecodeError",
     "StegoEncodeError",
     "StegoError",
     "StegoModelError",
     "StegoStats",
+    "get_model_info",
+    "list_models",
 ]

@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass
+
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
+from dotenv import load_dotenv
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
+)
 
 from .utils import StegoModelError
 
@@ -13,6 +22,75 @@ FALLBACK_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
 # Default prompt that seeds the generation context
 DEFAULT_PROMPT = "The following is a passage from a book:"
+
+
+# ---------------------------------------------------------------------------
+# Model registry
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ModelInfo:
+    """Metadata for a recommended model."""
+
+    name: str
+    description: str
+    parameters: str
+    gated: bool = False
+
+
+MODEL_REGISTRY: tuple[ModelInfo, ...] = (
+    ModelInfo(
+        name="HuggingFaceTB/SmolLM-135M",
+        description="Tiny, fast default model (recommended)",
+        parameters="135M",
+    ),
+    ModelInfo(
+        name="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        description="Small chat model used as fallback",
+        parameters="1.1B",
+    ),
+    ModelInfo(
+        name="HuggingFaceTB/SmolLM-360M",
+        description="Larger SmolLM variant, better prose quality",
+        parameters="360M",
+    ),
+    ModelInfo(
+        name="Qwen/Qwen2.5-0.5B",
+        description="Compact multilingual model",
+        parameters="0.5B",
+    ),
+    ModelInfo(
+        name="meta-llama/Llama-3.2-1B",
+        description="High-quality Meta model (requires HF_TOKEN)",
+        parameters="1B",
+        gated=True,
+    ),
+)
+
+
+def list_models() -> tuple[ModelInfo, ...]:
+    """Return all recommended models."""
+    return MODEL_REGISTRY
+
+
+def get_model_info(model_name: str) -> ModelInfo | None:
+    """Look up a model by name. Returns ``None`` if not in the registry."""
+    for info in MODEL_REGISTRY:
+        if info.name == model_name:
+            return info
+    return None
+
+
+# ---------------------------------------------------------------------------
+# HuggingFace token helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_hf_token() -> str | None:
+    """Load ``.env`` and return the ``HF_TOKEN`` environment variable, if set."""
+    load_dotenv()
+    return os.environ.get("HF_TOKEN") or None
 
 
 def _resolve_device(device: str) -> torch.device:
@@ -43,6 +121,7 @@ def _setup_determinism() -> None:
 def load_model(
     model_name: str,
     device: str = "auto",
+    token: str | None = None,
 ) -> tuple[PreTrainedModel, PreTrainedTokenizerBase, torch.device]:
     """Load a causal language model and tokenizer.
 
@@ -52,6 +131,8 @@ def load_model(
     Args:
         model_name: HuggingFace model identifier.
         device: Device string ('auto', 'cpu', 'cuda', etc.).
+        token: HuggingFace API token for gated models.  When ``None``,
+            falls back to the ``HF_TOKEN`` environment variable / ``.env``.
 
     Returns:
         A tuple of (model, tokenizer, resolved_device).
@@ -61,13 +142,15 @@ def load_model(
     """
     _setup_determinism()
     resolved_device = _resolve_device(device)
+    hf_token = token or _get_hf_token()
 
     for name in (model_name, FALLBACK_MODEL):
         try:
-            tokenizer = AutoTokenizer.from_pretrained(name)
+            tokenizer = AutoTokenizer.from_pretrained(name, token=hf_token)
             model = AutoModelForCausalLM.from_pretrained(
                 name,
                 torch_dtype=torch.float32,  # float32 for determinism
+                token=hf_token,
             )
             model = model.to(resolved_device)
             model.eval()
@@ -81,9 +164,7 @@ def load_model(
             if name == model_name and name != FALLBACK_MODEL:
                 # Primary failed, will try fallback
                 continue
-            raise StegoModelError(
-                f"Failed to load model '{name}': {exc}"
-            ) from exc
+            raise StegoModelError(f"Failed to load model '{name}': {exc}") from exc
 
     # Should not reach here, but satisfy type checker
     raise StegoModelError("No model could be loaded")
