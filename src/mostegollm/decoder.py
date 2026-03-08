@@ -10,7 +10,16 @@ from __future__ import annotations
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-from .encoder import HALF, PRECISION, QUARTER, TOP_K, WHOLE, _get_token_distribution
+from .encoder import (
+    HALF,
+    PRECISION,
+    QUARTER,
+    TOP_K,
+    WHOLE,
+    _filter_distribution,
+    _get_token_distribution,
+    get_non_roundtrip_tokens,
+)
 from .utils import (
     HEADER_BITS,
     HEADER_SIZE,
@@ -72,6 +81,11 @@ def decode(
     next_input = prompt_ids.clone()
     past_kv = None
 
+    # Pre-compute BPE filter state (must match the encoder exactly).
+    non_rt_tokens = get_non_roundtrip_tokens(tokenizer)
+    merge_cache: dict[tuple[int, int], bool] = {}
+    prev_token_id: int | None = None
+
     # --- Arithmetic coding state (encoder/compressor side) ---
     low = 0
     high = WHOLE
@@ -80,10 +94,15 @@ def decode(
 
     # Process each token in the cover text
     for step, token_id in enumerate(cover_token_ids):
-        # Get the same distribution the encoder saw at this position
+        # Get the same distribution the encoder saw at this position,
+        # then apply the same BPE merge filter.
         tok_ids, cum_probs, past_kv = _get_token_distribution(
             model, next_input, device, top_k=top_k, temperature=temperature,
             past_key_values=past_kv,
+        )
+        tok_ids, cum_probs = _filter_distribution(
+            tokenizer, prev_token_id, tok_ids, cum_probs,
+            non_rt_tokens, merge_cache,
         )
 
         # Find the index of this token in the distribution
@@ -130,6 +149,7 @@ def decode(
 
         # Advance the context (same as encoder)
         next_input = torch.tensor([[token_id]], device=device)
+        prev_token_id = token_id
 
     # Flush remaining state: emit one more disambiguating bit plus pending
     pending += 1

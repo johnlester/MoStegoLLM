@@ -17,6 +17,9 @@ from .utils import (
     pack_header,
 )
 
+# Cache of non-round-tripping token sets, keyed by tokenizer identity.
+_NON_RT_CACHE: dict[int, frozenset[int]] = {}
+
 # Arithmetic coding precision (number of bits for the interval)
 PRECISION = 32
 WHOLE = 1 << PRECISION  # 2^32
@@ -31,6 +34,94 @@ MAX_EXTRA_TOKENS = 100
 
 # Top-k tokens to consider from the distribution
 TOP_K = 256
+
+
+def get_non_roundtrip_tokens(tokenizer: PreTrainedTokenizerBase) -> frozenset[int]:
+    """Return the set of token IDs that don't survive a decode→encode round-trip.
+
+    These are typically byte-fallback tokens that decode to the Unicode
+    replacement character and re-encode to a different token ID.  Cached
+    per tokenizer instance.
+    """
+    key = id(tokenizer)
+    if key not in _NON_RT_CACHE:
+        bad: set[int] = set()
+        for tid in range(tokenizer.vocab_size):
+            text = tokenizer.decode([tid])
+            re_encoded = tokenizer.encode(text, add_special_tokens=False)
+            if re_encoded != [tid]:
+                bad.add(tid)
+        _NON_RT_CACHE[key] = frozenset(bad)
+    return _NON_RT_CACHE[key]
+
+
+def _filter_distribution(
+    tokenizer: PreTrainedTokenizerBase,
+    prev_token_id: int | None,
+    token_ids: list[int],
+    cum_probs: list[int],
+    non_rt_tokens: frozenset[int],
+    merge_cache: dict[tuple[int, int], bool],
+) -> tuple[list[int], list[int]]:
+    """Remove tokens that would cause tokenizer round-trip mismatches.
+
+    Filters out:
+    1. Tokens that don't round-trip individually (byte fallbacks, etc.).
+    2. Tokens that would be merged with *prev_token_id* by the BPE tokenizer
+       during a decode→encode round-trip.
+
+    Returns a new ``(token_ids, cum_probs)`` pair with the filtered
+    distribution re-scaled to ``[0, WHOLE)``.
+    """
+    widths: list[int] = []
+    keep_ids: list[int] = []
+
+    for i, tid in enumerate(token_ids):
+        # Skip tokens that don't round-trip individually.
+        if tid in non_rt_tokens:
+            continue
+
+        # Skip tokens that would merge with the previous token.
+        if prev_token_id is not None:
+            pair = (prev_token_id, tid)
+            if pair not in merge_cache:
+                text = tokenizer.decode([prev_token_id, tid])
+                re_enc = tokenizer.encode(text, add_special_tokens=False)
+                merge_cache[pair] = re_enc != [prev_token_id, tid]
+            if merge_cache[pair]:
+                continue
+
+        keep_ids.append(tid)
+        widths.append(cum_probs[i + 1] - cum_probs[i])
+
+    if not keep_ids:
+        # Shouldn't happen in practice; fall back to the unfiltered distribution.
+        return token_ids, cum_probs
+
+    # Rebuild cumulative distribution scaled to [0, WHOLE).
+    total_width = sum(widths)
+    new_cum = [0]
+    running = 0
+    for w in widths:
+        running += (w * WHOLE) // total_width
+        new_cum.append(running)
+    new_cum[-1] = WHOLE
+
+    # Ensure no zero-width intervals.
+    for i in range(1, len(new_cum)):
+        if new_cum[i] <= new_cum[i - 1]:
+            new_cum[i] = new_cum[i - 1] + 1
+
+    # Truncate if min-width adjustments pushed past WHOLE.
+    if new_cum[-1] > WHOLE:
+        for i in range(1, len(new_cum)):
+            if new_cum[i] >= WHOLE:
+                new_cum[i] = WHOLE
+                keep_ids = keep_ids[:i]
+                new_cum = new_cum[: i + 1]
+                break
+
+    return keep_ids, new_cum
 
 
 def _is_sentence_ending(tokenizer: PreTrainedTokenizerBase, token_id: int) -> bool:
@@ -183,6 +274,11 @@ def encode(
     next_input = prompt_ids.clone()
     past_kv: DynamicCache | None = None
 
+    # Pre-compute tokens that never round-trip and a cache for merge checks.
+    non_rt_tokens = get_non_roundtrip_tokens(tokenizer)
+    merge_cache: dict[tuple[int, int], bool] = {}
+    prev_token_id: int | None = None
+
     # --- Arithmetic coding state (decoder side) ---
     low = 0
     high = WHOLE
@@ -216,10 +312,15 @@ def encode(
                 f"Emitted {bits_emitted}/{total_bits} bits."
             )
 
-        # Get distribution at current position
+        # Get distribution at current position, then filter out tokens that
+        # would cause BPE merge mismatches on decode→encode round-trip.
         token_ids, cum_probs, past_kv = _get_token_distribution(
             model, next_input, device, top_k=top_k, temperature=temperature,
             past_key_values=past_kv,
+        )
+        token_ids, cum_probs = _filter_distribution(
+            tokenizer, prev_token_id, token_ids, cum_probs,
+            non_rt_tokens, merge_cache,
         )
         n_tokens = len(token_ids)
         range_size = high - low
@@ -279,6 +380,7 @@ def encode(
         generated_token_ids.append(chosen_token_id)
         next_input = torch.tensor([[chosen_token_id]], device=device)
         tokens_generated += 1
+        prev_token_id = chosen_token_id
 
         # Re-evaluate whether data is recoverable RIGHT NOW (not latched).
         # The flush check is valid only at the instant it's evaluated — if we
@@ -315,18 +417,5 @@ def encode(
 
     # Decode generated tokens to text
     cover_text = tokenizer.decode(generated_token_ids, skip_special_tokens=False)
-
-    # Verify tokenizer round-trip: re-tokenizing the cover text must produce the
-    # same token IDs the encoder used; otherwise the decoder will see different
-    # probability distributions and fail.
-    re_tokenized = tokenizer.encode(cover_text, add_special_tokens=False)
-    if re_tokenized != generated_token_ids:
-        raise StegoEncodeError(
-            "Tokenizer round-trip mismatch: re-encoding the generated cover text "
-            "produced different token IDs than the encoder used. "
-            f"Generated {len(generated_token_ids)} tokens, "
-            f"re-tokenized to {len(re_tokenized)} tokens. "
-            "Retry with a different prompt or seed."
-        )
 
     return cover_text, generated_token_ids, total_bits

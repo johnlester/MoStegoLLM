@@ -279,16 +279,13 @@ SEED_PHRASES: tuple[str, ...] = (
 _SORTED_PHRASES = sorted(SEED_PHRASES, key=len, reverse=True)
 
 
-def select_seed(data: bytes, attempt: int = 0) -> str:
+def select_seed(data: bytes) -> str:
     """Pick a seed phrase deterministically from the SHA-256 hash of *data*.
 
     Args:
         data: The payload bytes to hash.
-        attempt: Retry counter.  Each value produces a different seed phrase,
-            allowing the codec to try alternative seeds when a tokenizer
-            round-trip mismatch is detected.
     """
-    h = hashlib.sha256(data + attempt.to_bytes(2, "big")).digest()
+    h = hashlib.sha256(data).digest()
     idx = int.from_bytes(h[:2], "big") % len(SEED_PHRASES)
     return SEED_PHRASES[idx]
 
