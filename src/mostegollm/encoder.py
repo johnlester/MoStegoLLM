@@ -175,8 +175,11 @@ def encode(
         bit_pos += 1
         return b
 
-    # Tokenize the prompt
+    # Tokenize the prompt (ensure at least the BOS token for empty prompts)
     prompt_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
+    if prompt_ids.numel() == 0:
+        bos = tokenizer.bos_token_id or 0
+        prompt_ids = torch.tensor([[bos]], device=device)
     next_input = prompt_ids.clone()
     past_kv: DynamicCache | None = None
 
@@ -312,5 +315,18 @@ def encode(
 
     # Decode generated tokens to text
     cover_text = tokenizer.decode(generated_token_ids, skip_special_tokens=False)
+
+    # Verify tokenizer round-trip: re-tokenizing the cover text must produce the
+    # same token IDs the encoder used; otherwise the decoder will see different
+    # probability distributions and fail.
+    re_tokenized = tokenizer.encode(cover_text, add_special_tokens=False)
+    if re_tokenized != generated_token_ids:
+        raise StegoEncodeError(
+            "Tokenizer round-trip mismatch: re-encoding the generated cover text "
+            "produced different token IDs than the encoder used. "
+            f"Generated {len(generated_token_ids)} tokens, "
+            f"re-tokenized to {len(re_tokenized)} tokens. "
+            "Retry with a different prompt or seed."
+        )
 
     return cover_text, generated_token_ids, total_bits

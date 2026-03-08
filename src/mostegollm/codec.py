@@ -12,6 +12,7 @@ from .crypto import decrypt as _decrypt, encrypt as _encrypt
 from .decoder import decode as _decode
 from .encoder import TOP_K, encode as _encode
 from .model import DEFAULT_PROMPT, PRIMARY_MODEL, ModelInfo, get_model_info, list_models, load_model
+from .seeds import match_seed, select_seed
 from .utils import (
     HEADER_BITS,
     StegoDecodeError,
@@ -23,6 +24,7 @@ from .utils import (
 
 DEFAULT_CHUNK_SIZE = 2000  # bytes of plaintext per chunk
 DEFAULT_CONTEXT_SIZE = 500  # characters of prior cover text used as prompt for next chunk
+_MAX_SEED_RETRIES = 10  # max seed attempts before giving up on tokenizer round-trip
 
 
 class StegoCodec:
@@ -128,20 +130,38 @@ class StegoCodec:
             StegoEncodeError: If encoding fails.
             StegoModelError: If the model cannot be loaded.
         """
+        original_data = data
         if self._password is not None:
             data = _encrypt(data, self._password)
         model, tokenizer, device = self._ensure_model()
-        cover_text, _token_ids, _total_bits = _encode(
-            data,
-            model=model,
-            tokenizer=tokenizer,
-            device=device,
-            prompt=self._prompt,
-            top_k=self._top_k,
-            temperature=self._temperature,
-            sentence_boundary=self._sentence_boundary,
-        )
-        return cover_text
+
+        # Try encoding with different seed phrases until the tokenizer
+        # round-trip check passes (or fall through with the last error).
+        last_err: StegoEncodeError | None = None
+        max_attempts = _MAX_SEED_RETRIES if not self._prompt else 1
+        for attempt in range(max_attempts):
+            seed = select_seed(original_data, attempt) if not self._prompt else ""
+            prompt = self._prompt or seed
+            try:
+                cover_text, _token_ids, _total_bits = _encode(
+                    data,
+                    model=model,
+                    tokenizer=tokenizer,
+                    device=device,
+                    prompt=prompt,
+                    top_k=self._top_k,
+                    temperature=self._temperature,
+                    sentence_boundary=self._sentence_boundary,
+                )
+                return seed + cover_text
+            except StegoEncodeError as exc:
+                if "round-trip mismatch" in str(exc):
+                    last_err = exc
+                    continue
+                raise
+
+        assert last_err is not None
+        raise last_err
 
     def decode(self, cover_text: str) -> bytes:
         """Decode steganographic cover text back to the original bytes.
@@ -157,13 +177,24 @@ class StegoCodec:
             StegoCryptoError: If decryption fails (wrong password, tampered data).
             StegoModelError: If the model cannot be loaded.
         """
+        # If using seed phrases (no custom prompt), extract the seed from the
+        # cover text prefix to reconstruct the prompt used during encoding.
+        if not self._prompt:
+            try:
+                seed, cover_text = match_seed(cover_text)
+            except ValueError as exc:
+                raise StegoDecodeError(str(exc)) from exc
+            prompt = seed
+        else:
+            prompt = self._prompt
+
         model, tokenizer, device = self._ensure_model()
         payload = _decode(
             cover_text,
             model=model,
             tokenizer=tokenizer,
             device=device,
-            prompt=self._prompt,
+            prompt=prompt,
             top_k=self._top_k,
             temperature=self._temperature,
         )
@@ -261,22 +292,48 @@ class StegoCodec:
 
         cover_texts: list[str] = []
         for idx, chunk in enumerate(chunks):
-            prompt = (
-                self._prompt
-                if idx == 0
-                else cover_texts[idx - 1][-context_size:]
-            )
-            cover_text, _token_ids, _total_bits = _encode(
-                chunk,
-                model=model,
-                tokenizer=tokenizer,
-                device=device,
-                prompt=prompt,
-                top_k=self._top_k,
-                temperature=self._temperature,
-                sentence_boundary=self._sentence_boundary,
-            )
-            cover_texts.append(cover_text)
+            if idx == 0:
+                # Try different seeds for the first chunk until round-trip passes.
+                last_err: StegoEncodeError | None = None
+                max_attempts = _MAX_SEED_RETRIES if not self._prompt else 1
+                for attempt in range(max_attempts):
+                    seed = select_seed(data, attempt) if not self._prompt else ""
+                    prompt = self._prompt or seed
+                    try:
+                        cover_text, _ids, _bits = _encode(
+                            chunk,
+                            model=model,
+                            tokenizer=tokenizer,
+                            device=device,
+                            prompt=prompt,
+                            top_k=self._top_k,
+                            temperature=self._temperature,
+                            sentence_boundary=self._sentence_boundary,
+                        )
+                        cover_texts.append(seed + cover_text)
+                        last_err = None
+                        break
+                    except StegoEncodeError as exc:
+                        if "round-trip mismatch" in str(exc):
+                            last_err = exc
+                            continue
+                        raise
+                if last_err is not None:
+                    raise last_err
+            else:
+                prev = cover_texts[idx - 1]
+                prompt = prev[-context_size:]
+                cover_text, _ids, _bits = _encode(
+                    chunk,
+                    model=model,
+                    tokenizer=tokenizer,
+                    device=device,
+                    prompt=prompt,
+                    top_k=self._top_k,
+                    temperature=self._temperature,
+                    sentence_boundary=self._sentence_boundary,
+                )
+                cover_texts.append(cover_text)
 
         return cover_texts
 
@@ -299,11 +356,19 @@ class StegoCodec:
 
         payloads: list[bytes] = []
         for idx, cover_text in enumerate(cover_texts):
-            prompt = (
-                self._prompt
-                if idx == 0
-                else cover_texts[idx - 1][-context_size:]
-            )
+            if idx == 0:
+                if not self._prompt:
+                    try:
+                        seed, cover_text = match_seed(cover_text)
+                    except ValueError as exc:
+                        raise StegoDecodeError(str(exc)) from exc
+                    prompt = seed
+                else:
+                    prompt = self._prompt
+            else:
+                prev = cover_texts[idx - 1]
+                prompt = prev[-context_size:]
+
             payload = _decode(
                 cover_text,
                 model=model,
@@ -374,19 +439,37 @@ class StegoCodec:
             encoding statistics.
         """
         original_size = len(data)
+        original_data = data
         if self._password is not None:
             data = _encrypt(data, self._password)
         model, tokenizer, device = self._ensure_model()
-        cover_text, token_ids, total_bits = _encode(
-            data,
-            model=model,
-            tokenizer=tokenizer,
-            device=device,
-            prompt=self._prompt,
-            top_k=self._top_k,
-            temperature=self._temperature,
-            sentence_boundary=self._sentence_boundary,
-        )
+
+        last_err: StegoEncodeError | None = None
+        max_attempts = _MAX_SEED_RETRIES if not self._prompt else 1
+        for attempt in range(max_attempts):
+            seed = select_seed(original_data, attempt) if not self._prompt else ""
+            prompt = self._prompt or seed
+            try:
+                cover_text, token_ids, total_bits = _encode(
+                    data,
+                    model=model,
+                    tokenizer=tokenizer,
+                    device=device,
+                    prompt=prompt,
+                    top_k=self._top_k,
+                    temperature=self._temperature,
+                    sentence_boundary=self._sentence_boundary,
+                )
+                cover_text = seed + cover_text
+                last_err = None
+                break
+            except StegoEncodeError as exc:
+                if "round-trip mismatch" in str(exc):
+                    last_err = exc
+                    continue
+                raise
+        if last_err is not None:
+            raise last_err
         total_tokens = len(token_ids)
         payload_bits = total_bits - HEADER_BITS
         bits_per_token = total_bits / total_tokens if total_tokens > 0 else 0.0

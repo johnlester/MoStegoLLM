@@ -64,8 +64,11 @@ def decode(
     if not cover_token_ids:
         raise StegoDecodeError("No tokens to decode")
 
-    # Tokenize the prompt (same as encoder)
+    # Tokenize the prompt (same as encoder — ensure at least the BOS token)
     prompt_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
+    if prompt_ids.numel() == 0:
+        bos = tokenizer.bos_token_id or 0
+        prompt_ids = torch.tensor([[bos]], device=device)
     next_input = prompt_ids.clone()
     past_kv = None
 

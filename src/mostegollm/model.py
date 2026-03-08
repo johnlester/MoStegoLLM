@@ -21,7 +21,7 @@ PRIMARY_MODEL = "HuggingFaceTB/SmolLM-135M"
 FALLBACK_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
 # Default prompt that seeds the generation context
-DEFAULT_PROMPT = "The following is a passage from a book:"
+DEFAULT_PROMPT = ""
 
 
 # ---------------------------------------------------------------------------
