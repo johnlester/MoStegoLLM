@@ -124,8 +124,8 @@ class TestQwenAPI:
             dst = Path(tmpdir) / "output.bin"
             src.write_bytes(data)
 
-            cover = qwen_codec.encode_file(src)
-            qwen_codec.decode_file(cover, dst)
+            covers = qwen_codec.encode(src.read_bytes(), chunk_size=2000)
+            dst.write_bytes(qwen_codec.decode(covers))
 
             assert dst.read_bytes() == data
 
@@ -187,24 +187,24 @@ class TestQwenChunked:
 
     def test_single_chunk(self, qwen_codec: StegoCodec) -> None:
         original = b"hello"
-        cover_texts = qwen_codec.encode_long(original, chunk_size=2000)
+        cover_texts = qwen_codec.encode(original, chunk_size=2000)
         assert len(cover_texts) == 1
-        assert qwen_codec.decode_long(cover_texts) == original
+        assert qwen_codec.decode(cover_texts) == original
 
     def test_multi_chunk_roundtrip(self, qwen_codec: StegoCodec) -> None:
         original = b"A" * 50 + b"B" * 50 + b"C" * 50
-        cover_texts = qwen_codec.encode_long(original, chunk_size=50)
+        cover_texts = qwen_codec.encode(original, chunk_size=50)
         assert len(cover_texts) == 3
-        assert qwen_codec.decode_long(cover_texts) == original
+        assert qwen_codec.decode(cover_texts) == original
 
     def test_chunked_str_roundtrip(self, qwen_codec: StegoCodec) -> None:
         original = "Hello, world! " * 10
-        cover_texts = qwen_codec.encode_long_str(original, chunk_size=50)
+        cover_texts = qwen_codec.encode(original.encode(), chunk_size=50)
         assert len(cover_texts) >= 2
-        assert qwen_codec.decode_long_str(cover_texts) == original
+        assert qwen_codec.decode(cover_texts).decode() == original
 
     def test_chunked_encrypted_roundtrip(self, qwen_codec_encrypted: StegoCodec) -> None:
         original = b"Secret chunked message!"
-        cover_texts = qwen_codec_encrypted.encode_long(original, chunk_size=20)
+        cover_texts = qwen_codec_encrypted.encode(original, chunk_size=20)
         assert len(cover_texts) >= 2
-        assert qwen_codec_encrypted.decode_long(cover_texts) == original
+        assert qwen_codec_encrypted.decode(cover_texts) == original
