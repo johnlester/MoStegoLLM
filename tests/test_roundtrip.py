@@ -52,6 +52,15 @@ class TestRoundTrip:
         recovered = codec.decode_str(cover)
         assert recovered == original
 
+    def test_chunked_via_param(self, codec: StegoCodec) -> None:
+        """encode(chunk_size=...) should return a list and round-trip."""
+        original = b"A" * 50 + b"B" * 50 + b"C" * 50
+        covers = codec.encode(original, chunk_size=50)
+        assert isinstance(covers, list)
+        assert len(covers) == 3
+        recovered = codec.decode(covers)
+        assert recovered == original
+
     def test_determinism(self, codec: StegoCodec) -> None:
         """Encoding the same input twice should produce identical output."""
         data = b"deterministic"

@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import pathlib
-from typing import Union
-
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
@@ -116,19 +113,37 @@ class StegoCodec:
     # Core API
     # ------------------------------------------------------------------
 
-    def encode(self, data: bytes) -> str:
+    def encode(
+        self,
+        data: bytes,
+        *,
+        chunk_size: int | None = None,
+        context_size: int = DEFAULT_CONTEXT_SIZE,
+    ) -> str | list[str]:
         """Encode binary data into steganographic cover text.
 
         Args:
             data: Arbitrary bytes to hide.
+            chunk_size: If set, split *data* into chunks of this many bytes
+                and return a list of cover texts (one per chunk).  When
+                ``None`` (default), encode as a single piece and return a
+                plain string.
+            context_size: When chunking, number of trailing characters from
+                the previous chunk's cover text to use as the prompt for the
+                next chunk.
 
         Returns:
-            A string of natural-looking English text that encodes *data*.
+            A string of natural-looking English text that encodes *data*
+            when *chunk_size* is ``None``, or a list of such strings when
+            chunking is enabled.
 
         Raises:
             StegoEncodeError: If encoding fails.
             StegoModelError: If the model cannot be loaded.
         """
+        if chunk_size is not None:
+            return self._encode_chunked(data, chunk_size=chunk_size, context_size=context_size)
+
         seed = select_seed(data) if not self._prompt else ""
         prompt = self._prompt or seed
 
@@ -147,20 +162,31 @@ class StegoCodec:
         )
         return seed + cover_text
 
-    def decode(self, cover_text: str) -> bytes:
+    def decode(
+        self,
+        cover_text: str | list[str],
+        *,
+        context_size: int = DEFAULT_CONTEXT_SIZE,
+    ) -> bytes:
         """Decode steganographic cover text back to the original bytes.
 
         Args:
-            cover_text: Text previously produced by :meth:`encode`.
+            cover_text: Text previously produced by :meth:`encode`.  May be
+                a single string or a list of strings (from chunked encoding).
+            context_size: When decoding a list, must match the value used
+                during encoding.
 
         Returns:
             The original binary payload.
 
         Raises:
-            StegoDecodeError: If decoding fails (wrong prompt, corrupted text, …).
+            StegoDecodeError: If decoding fails (wrong prompt, corrupted text, ...).
             StegoCryptoError: If decryption fails (wrong password, tampered data).
             StegoModelError: If the model cannot be loaded.
         """
+        if isinstance(cover_text, list):
+            return self._decode_chunked(cover_text, context_size=context_size)
+
         # If using seed phrases (no custom prompt), extract the seed from the
         # cover text prefix to reconstruct the prompt used during encoding.
         if not self._prompt:
@@ -200,7 +226,9 @@ class StegoCodec:
         Returns:
             Steganographic cover text.
         """
-        return self.encode(text.encode(encoding))
+        result = self.encode(text.encode(encoding))
+        assert isinstance(result, str)
+        return result
 
     def decode_str(self, cover_text: str, encoding: str = "utf-8") -> str:
         """Decode steganographic cover text back to a string.
@@ -214,56 +242,23 @@ class StegoCodec:
         """
         return self.decode(cover_text).decode(encoding)
 
-    def encode_file(self, path: Union[str, pathlib.Path]) -> str:
-        """Read a file and encode its contents.
-
-        Args:
-            path: Path to the input file.
-
-        Returns:
-            Steganographic cover text encoding the file's bytes.
-        """
-        data = pathlib.Path(path).read_bytes()
-        return self.encode(data)
-
-    def decode_file(
-        self, cover_text: str, output_path: Union[str, pathlib.Path]
-    ) -> None:
-        """Decode cover text and write the result to a file.
-
-        Args:
-            cover_text: Text previously produced by :meth:`encode` or
-                :meth:`encode_file`.
-            output_path: Where to write the recovered bytes.
-        """
-        data = self.decode(cover_text)
-        pathlib.Path(output_path).write_bytes(data)
-
     # ------------------------------------------------------------------
-    # Chunked (long data) API
+    # Private chunked helpers
     # ------------------------------------------------------------------
 
-    def encode_long(
+    def _encode_chunked(
         self,
         data: bytes,
-        chunk_size: int = DEFAULT_CHUNK_SIZE,
-        context_size: int = DEFAULT_CONTEXT_SIZE,
+        *,
+        chunk_size: int,
+        context_size: int,
     ) -> list[str]:
-        """Encode arbitrarily large data by splitting it into independently encoded chunks.
+        """Encode data by splitting into independently encoded chunks.
 
         Each chunk is encoded as a standalone steganographic message.  When
         ``password`` is set, each chunk is encrypted independently (separate
         salt/nonce).  Consecutive chunks use the tail of the previous chunk's
         cover text as the prompt so that the generated prose reads coherently.
-
-        Args:
-            data: Arbitrary bytes to hide.
-            chunk_size: Maximum plaintext bytes per chunk (before encryption).
-            context_size: Number of trailing characters from the previous
-                chunk's cover text to use as the prompt for the next chunk.
-
-        Returns:
-            A list of cover-text strings, one per chunk.
         """
         model, tokenizer, device = self._ensure_model()
 
@@ -298,21 +293,13 @@ class StegoCodec:
 
         return cover_texts
 
-    def decode_long(
+    def _decode_chunked(
         self,
         cover_texts: list[str],
-        context_size: int = DEFAULT_CONTEXT_SIZE,
+        *,
+        context_size: int,
     ) -> bytes:
-        """Decode a list of cover texts produced by :meth:`encode_long`.
-
-        Args:
-            cover_texts: Cover-text strings in the same order produced by
-                :meth:`encode_long`.
-            context_size: Must match the value used during encoding.
-
-        Returns:
-            The original binary payload.
-        """
+        """Decode a list of cover texts produced by chunked encoding."""
         model, tokenizer, device = self._ensure_model()
 
         payloads: list[bytes] = []
@@ -344,46 +331,6 @@ class StegoCodec:
             payloads.append(payload)
 
         return b"".join(payloads)
-
-    def encode_long_str(
-        self,
-        text: str,
-        encoding: str = "utf-8",
-        chunk_size: int = DEFAULT_CHUNK_SIZE,
-        context_size: int = DEFAULT_CONTEXT_SIZE,
-    ) -> list[str]:
-        """Encode a string using chunked encoding.
-
-        Args:
-            text: The string to encode.
-            encoding: Character encoding (default ``utf-8``).
-            chunk_size: Maximum plaintext bytes per chunk.
-            context_size: Trailing characters used as prompt for next chunk.
-
-        Returns:
-            A list of cover-text strings, one per chunk.
-        """
-        return self.encode_long(
-            text.encode(encoding), chunk_size=chunk_size, context_size=context_size
-        )
-
-    def decode_long_str(
-        self,
-        cover_texts: list[str],
-        encoding: str = "utf-8",
-        context_size: int = DEFAULT_CONTEXT_SIZE,
-    ) -> str:
-        """Decode chunked cover texts back to a string.
-
-        Args:
-            cover_texts: Cover-text strings produced by :meth:`encode_long_str`.
-            encoding: Character encoding (default ``utf-8``).
-            context_size: Must match the value used during encoding.
-
-        Returns:
-            The original string.
-        """
-        return self.decode_long(cover_texts, context_size=context_size).decode(encoding)
 
     # ------------------------------------------------------------------
     # Diagnostics
