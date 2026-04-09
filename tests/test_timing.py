@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from mostegollm import StegoCodec
 
 
+@pytest.mark.slow
 def test_encode_short_timing(codec: StegoCodec) -> None:
-    """Time encoding a trivially short payload."""
+    """Encoding a trivially short payload should complete in under 60s on CPU."""
     data = b"hi"
 
     start = time.perf_counter()
@@ -16,6 +19,7 @@ def test_encode_short_timing(codec: StegoCodec) -> None:
     elapsed = time.perf_counter() - start
 
     print(f"\nEncoding {len(data)} bytes took {elapsed:.3f}s")
+    assert elapsed < 60, f"Encoding took {elapsed:.1f}s, expected < 60s"
 
 
 def test_sentence_boundary_ending(codec_sentence_boundary: StegoCodec) -> None:
