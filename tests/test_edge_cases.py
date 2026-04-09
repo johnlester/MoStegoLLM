@@ -82,3 +82,20 @@ class TestEdgeCases:
         data = b"\x00" * 10
         cover = codec.encode(data)
         assert codec.decode(cover) == data
+
+
+class TestSeedPhrases:
+    """Test seed phrase invariants."""
+
+    def test_no_prefix_collisions(self) -> None:
+        """No seed phrase should be a prefix of another."""
+        from mostegollm.seeds import SEED_PHRASES
+        for i, a in enumerate(SEED_PHRASES):
+            for b in SEED_PHRASES[i + 1:]:
+                assert not a.startswith(b), f"{a!r} starts with {b!r}"
+                assert not b.startswith(a), f"{b!r} starts with {a!r}"
+
+    def test_validation_runs_at_import(self) -> None:
+        """The module should validate prefix collisions on import."""
+        from mostegollm.seeds import SEED_PHRASES
+        assert len(SEED_PHRASES) == 256

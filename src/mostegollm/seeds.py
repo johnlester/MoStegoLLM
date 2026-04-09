@@ -278,6 +278,13 @@ SEED_PHRASES: tuple[str, ...] = (
 # Pre-sort by length descending for unambiguous longest-prefix matching.
 _SORTED_PHRASES = sorted(SEED_PHRASES, key=len, reverse=True)
 
+# Validate no phrase is a prefix of another (required for unambiguous matching).
+for _i, _a in enumerate(SEED_PHRASES):
+    for _b in SEED_PHRASES[_i + 1:]:
+        if _a.startswith(_b) or _b.startswith(_a):
+            raise ValueError(f"Seed phrase prefix collision: {_a!r} / {_b!r}")
+del _i, _a, _b  # Clean up module namespace
+
 
 def select_seed(data: bytes) -> str:
     """Pick a seed phrase deterministically from the SHA-256 hash of *data*.
