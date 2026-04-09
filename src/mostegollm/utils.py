@@ -33,20 +33,21 @@ class StegoCryptoError(StegoError):
 # ---------------------------------------------------------------------------
 # Header format
 # ---------------------------------------------------------------------------
-# 2-byte magic  |  4-byte payload length (big-endian uint32)
-# 0x53 0x54     |  <length>
-# Total: 6 bytes = 48 bits
+# 2-byte magic  |  4-byte payload length (big-endian uint32)  |  4-byte CRC-32
+# 0x53 0x54     |  <length>                                   |  <crc32>
+# Total: 10 bytes = 80 bits
 MAGIC = b"\x53\x54"
-HEADER_FORMAT = ">2sI"  # 2-byte magic + 4-byte unsigned int
-HEADER_SIZE = struct.calcsize(HEADER_FORMAT)  # 6 bytes
-HEADER_BITS = HEADER_SIZE * 8  # 48 bits
+HEADER_FORMAT = ">2sII"  # 2-byte magic + 4-byte uint32 length + 4-byte uint32 CRC
+HEADER_SIZE = struct.calcsize(HEADER_FORMAT)  # 10 bytes
+HEADER_BITS = HEADER_SIZE * 8  # 80 bits
 
 
-def pack_header(payload_length: int) -> bytes:
-    """Pack a header containing magic bytes and the payload length.
+def pack_header(payload_length: int, crc32: int = 0) -> bytes:
+    """Pack a header containing magic bytes, payload length, and CRC-32.
 
     Args:
         payload_length: Length of the original payload in bytes.
+        crc32: CRC-32 checksum of the payload.
 
     Returns:
         Packed header bytes.
@@ -58,17 +59,17 @@ def pack_header(payload_length: int) -> bytes:
         raise StegoEncodeError("Payload length cannot be negative")
     if payload_length > 0xFFFFFFFF:
         raise StegoEncodeError("Payload too large (max 4 GiB)")
-    return struct.pack(HEADER_FORMAT, MAGIC, payload_length)
+    return struct.pack(HEADER_FORMAT, MAGIC, payload_length, crc32 & 0xFFFFFFFF)
 
 
-def unpack_header(header_bytes: bytes) -> int:
-    """Unpack a header and return the payload length.
+def unpack_header(header_bytes: bytes) -> tuple[int, int]:
+    """Unpack a header and return the payload length and CRC-32.
 
     Args:
         header_bytes: Raw header bytes (must be exactly HEADER_SIZE bytes).
 
     Returns:
-        The original payload length in bytes.
+        A tuple of (payload_length, crc32).
 
     Raises:
         StegoDecodeError: If the header is malformed or the magic bytes don't match.
@@ -77,14 +78,14 @@ def unpack_header(header_bytes: bytes) -> int:
         raise StegoDecodeError(
             f"Header must be exactly {HEADER_SIZE} bytes, got {len(header_bytes)}"
         )
-    magic, length = struct.unpack(HEADER_FORMAT, header_bytes)
+    magic, length, crc = struct.unpack(HEADER_FORMAT, header_bytes)
     if magic != MAGIC:
         raise StegoDecodeError(
             f"Invalid magic bytes: expected {MAGIC!r}, got {magic!r}. "
             "The text may not have been encoded with MoStegoLLM, "
             "or a different prompt was used."
         )
-    return length
+    return length, crc
 
 
 # ---------------------------------------------------------------------------

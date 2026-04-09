@@ -7,6 +7,8 @@ which token to emit at each step.
 
 from __future__ import annotations
 
+import zlib
+
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 from transformers.cache_utils import DynamicCache
@@ -249,7 +251,8 @@ def encode(
         StegoEncodeError: If encoding fails.
     """
     # Prepend header to payload
-    header = pack_header(len(data))
+    payload_crc = zlib.crc32(data) & 0xFFFFFFFF
+    header = pack_header(len(data), crc32=payload_crc)
     full_payload = header + data
     bits = bytes_to_bits(full_payload)
     total_bits = len(bits)

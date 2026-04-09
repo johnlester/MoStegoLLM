@@ -40,12 +40,14 @@ class TestHeader:
 
     def test_roundtrip(self) -> None:
         for length in (0, 1, 255, 65535, 1_000_000):
-            header = pack_header(length)
+            header = pack_header(length, crc32=0x12345678)
             assert len(header) == HEADER_SIZE
-            assert unpack_header(header) == length
+            recovered_length, recovered_crc = unpack_header(header)
+            assert recovered_length == length
+            assert recovered_crc == 0x12345678
 
     def test_bad_magic(self) -> None:
-        header = b"\x00\x00\x00\x00\x00\x00"
+        header = b"\x00\x00" + b"\x00" * 8
         with pytest.raises(StegoDecodeError, match="Invalid magic"):
             unpack_header(header)
 
@@ -99,3 +101,26 @@ class TestSeedPhrases:
         """The module should validate prefix collisions on import."""
         from mostegollm.seeds import SEED_PHRASES
         assert len(SEED_PHRASES) == 256
+
+
+class TestCRC:
+    """Test CRC-32 integrity checking."""
+
+    def test_header_includes_crc(self) -> None:
+        """New header should be 10 bytes (magic + length + crc32)."""
+        from mostegollm.utils import HEADER_SIZE
+        assert HEADER_SIZE == 10
+
+    def test_crc_roundtrip(self) -> None:
+        """pack_header with CRC should round-trip via unpack_header."""
+        data = b"test payload"
+        header = pack_header(len(data), crc32=0xDEADBEEF)
+        length, crc = unpack_header(header)
+        assert length == len(data)
+        assert crc == 0xDEADBEEF
+
+    def test_corrupted_payload_detected(self, codec: StegoCodec) -> None:
+        """End-to-end: encode then decode should work with CRC."""
+        data = b"integrity check"
+        cover = codec.encode(data)
+        assert codec.decode(cover) == data

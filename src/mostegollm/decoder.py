@@ -7,6 +7,8 @@ emits the corresponding bits.
 
 from __future__ import annotations
 
+import zlib
+
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
@@ -169,7 +171,7 @@ def decode(
 
     # Parse header
     header_bytes = bits_to_bytes(extracted_bits[:HEADER_BITS])
-    payload_length = unpack_header(header_bytes)
+    payload_length, expected_crc = unpack_header(header_bytes)
 
     # Extract payload
     payload_bits_needed = payload_length * 8
@@ -186,8 +188,17 @@ def decode(
     payload = bits_to_bytes(payload_bits)
 
     # Sanity check: the payload should be exactly payload_length bytes
-    assert len(payload) == payload_length, (
-        f"Internal error: expected {payload_length} bytes, got {len(payload)}"
-    )
+    if len(payload) != payload_length:
+        raise StegoDecodeError(
+            f"Internal error: expected {payload_length} bytes, got {len(payload)}"
+        )
+
+    # Verify CRC-32 integrity
+    actual_crc = zlib.crc32(payload) & 0xFFFFFFFF
+    if actual_crc != expected_crc:
+        raise StegoDecodeError(
+            "Payload integrity check failed -- data may be corrupted, "
+            "the wrong model was used, or the cover text was modified."
+        )
 
     return payload
