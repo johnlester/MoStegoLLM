@@ -5,11 +5,17 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+import traceback
 
 from .codec import StegoCodec
 from .encoder import TOP_K
 from .model import DEFAULT_PROMPT, PRIMARY_MODEL
-from .utils import StegoError
+from .utils import (
+    StegoDecodeError,
+    StegoError,
+    StegoModelError,
+    StegoCryptoError,
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -19,6 +25,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="print diagnostics to stderr"
+    )
+    parser.add_argument(
+        "-q", "--quiet", action="store_true", help="suppress model loading output on stderr"
     )
     parser.add_argument("--model", default=PRIMARY_MODEL, help="HuggingFace model name")
     parser.add_argument(
@@ -40,6 +49,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="continue generating until cover text ends at a sentence boundary",
     )
+    enc.add_argument(
+        "-p", "--password", default=None, help="encrypt payload with AES-256-GCM"
+    )
+    enc.add_argument(
+        "--chunk-size", type=int, default=None, help="split into chunks of N bytes"
+    )
+    enc.add_argument(
+        "--stats", action="store_true", help="print encoding stats to stderr"
+    )
 
     # -- models --------------------------------------------------------
     sub.add_parser("models", help="list recommended models")
@@ -49,12 +67,20 @@ def _build_parser() -> argparse.ArgumentParser:
     dec.add_argument("text", nargs="?", default=None, help="cover text to decode")
     dec.add_argument("-f", "--file", default=None, help="file containing cover text")
     dec.add_argument("-o", "--output", default=None, help="write decoded bytes to file")
+    dec.add_argument(
+        "-p", "--password", default=None, help="decrypt payload with AES-256-GCM"
+    )
+    dec.add_argument(
+        "-t", "--text", dest="text_mode", action="store_true",
+        help="decode and print as UTF-8 text",
+    )
 
     return parser
 
 
-def _log(msg: str) -> None:
-    print(msg, file=sys.stderr)
+def _log(msg: str, quiet: bool = False) -> None:
+    if not quiet:
+        print(msg, file=sys.stderr)
 
 
 def _read_input(args: argparse.Namespace) -> str | bytes:
@@ -72,7 +98,10 @@ def _read_input(args: argparse.Namespace) -> str | bytes:
         if args.command == "encode":
             return sys.stdin.buffer.read()
         return sys.stdin.read()
-    print(f"mostegollm {args.command}: no input (pass a string, -f FILE, or pipe stdin)", file=sys.stderr)
+    print(
+        f"mostegollm {args.command}: no input (pass a string, -f FILE, or pipe stdin)",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 
@@ -91,34 +120,57 @@ def _cmd_models() -> None:
         print(f"  {m.name:<{name_w}}  {m.parameters:<{param_w}}  {m.description}{gated}")
 
 
-def _cmd_encode(codec: StegoCodec, args: argparse.Namespace, verbose: bool) -> None:
+def _cmd_encode(
+    codec: StegoCodec, args: argparse.Namespace, verbose: bool, quiet: bool
+) -> None:
     raw = _read_input(args)
     data = raw if isinstance(raw, bytes) else raw.encode("utf-8")
 
     if verbose:
         _log(f"Payload size: {len(data)} bytes")
 
-    t0 = time.perf_counter()
-    stats = codec.encode_with_stats(data)
-    elapsed = time.perf_counter() - t0
+    chunk_size = getattr(args, "chunk_size", None)
+    show_stats = getattr(args, "stats", False) or verbose
 
-    if verbose:
-        _log(f"Tokens generated: {stats.total_tokens}")
-        _log(f"Bits per token:   {stats.bits_per_token:.2f}")
-        _log(f"Encoding time:    {elapsed:.2f}s")
+    t0 = time.perf_counter()
+
+    if chunk_size is not None:
+        result = codec.encode(data, chunk_size=chunk_size)
+        assert isinstance(result, list)
+        cover_text = "\n---\n".join(result)
+        elapsed = time.perf_counter() - t0
+        if show_stats:
+            _log(f"Chunks:           {len(result)}")
+            _log(f"Encoding time:    {elapsed:.2f}s")
+    else:
+        if show_stats:
+            stats = codec.encode_with_stats(data)
+            elapsed = time.perf_counter() - t0
+            cover_text = stats.cover_text
+            # Stats are printed even if quiet
+            _log(f"Tokens generated: {stats.total_tokens}")
+            _log(f"Bits per token:   {stats.bits_per_token:.2f}")
+            _log(f"Encoding time:    {elapsed:.2f}s")
+        else:
+            result_str = codec.encode(data)
+            assert isinstance(result_str, str)
+            cover_text = result_str
+            elapsed = time.perf_counter() - t0
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as fh:
-            fh.write(stats.cover_text)
+            fh.write(cover_text)
         if verbose:
             _log(f"Cover text written to {args.output}")
     else:
-        sys.stdout.write(stats.cover_text)
+        sys.stdout.write(cover_text)
         if sys.stdout.isatty():
             sys.stdout.write("\n")
 
 
-def _cmd_decode(codec: StegoCodec, args: argparse.Namespace, verbose: bool) -> None:
+def _cmd_decode(
+    codec: StegoCodec, args: argparse.Namespace, verbose: bool, quiet: bool
+) -> None:
     raw = _read_input(args)
     cover_text = raw if isinstance(raw, str) else raw.decode("utf-8")
 
@@ -130,11 +182,17 @@ def _cmd_decode(codec: StegoCodec, args: argparse.Namespace, verbose: bool) -> N
         _log(f"Recovered payload: {len(recovered)} bytes")
         _log(f"Decoding time:     {elapsed:.2f}s")
 
+    text_mode = getattr(args, "text_mode", False)
+
     if args.output:
         with open(args.output, "wb") as fh:
             fh.write(recovered)
         if verbose:
             _log(f"Decoded bytes written to {args.output}")
+    elif text_mode:
+        sys.stdout.write(recovered.decode("utf-8"))
+        if sys.stdout.isatty():
+            sys.stdout.write("\n")
     else:
         sys.stdout.buffer.write(recovered)
         if sys.stdout.isatty():
@@ -154,6 +212,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     verbose = args.verbose
+    quiet = args.quiet
 
     if verbose:
         import torch
@@ -169,27 +228,58 @@ def main(argv: list[str] | None = None) -> None:
 
     t_model = time.perf_counter()
     sentence_boundary = getattr(args, "sentence_boundary", False)
+    password = getattr(args, "password", None)
     codec = StegoCodec(
         model_name=args.model,
         device=args.device,
         prompt=args.prompt,
         top_k=args.top_k,
         sentence_boundary=sentence_boundary,
+        password=password,
     )
     # Force model load so we can report timing
+    _log("Loading model…", quiet=quiet)
     codec._ensure_model()
     t_model = time.perf_counter() - t_model
 
     if verbose:
         _log(f"Model loaded in {t_model:.2f}s")
+    else:
+        _log("Model ready.", quiet=quiet)
 
     try:
         if args.command == "encode":
-            _cmd_encode(codec, args, verbose)
+            _cmd_encode(codec, args, verbose, quiet)
         else:
-            _cmd_decode(codec, args, verbose)
+            _cmd_decode(codec, args, verbose, quiet)
+    except StegoDecodeError as exc:
+        print(
+            "Error: could not decode -- wrong model or corrupted text.",
+            file=sys.stderr,
+        )
+        if verbose:
+            traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
+    except StegoModelError as exc:
+        print(
+            f"Error: could not load model '{args.model}'. {exc}",
+            file=sys.stderr,
+        )
+        if verbose:
+            traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
+    except StegoCryptoError as exc:
+        print(
+            "Error: decryption failed -- wrong password or tampered data.",
+            file=sys.stderr,
+        )
+        if verbose:
+            traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
     except StegoError as exc:
         print(f"mostegollm: {exc}", file=sys.stderr)
+        if verbose:
+            traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
 
