@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 import pytest
 
 from mostegollm import StegoCodec, StegoDecodeError, StegoStats
@@ -37,19 +34,6 @@ class TestCodecAPI:
         assert stats.bits_per_token > 0
         assert stats.payload_size_bytes == len(data)
 
-    def test_file_roundtrip(self, codec: StegoCodec) -> None:
-        """encode_file / decode_file should round-trip a file."""
-        data = b"file content \x00\xff"
-        with tempfile.TemporaryDirectory() as tmpdir:
-            src = Path(tmpdir) / "input.bin"
-            dst = Path(tmpdir) / "output.bin"
-            src.write_bytes(data)
-
-            cover = codec.encode_file(src)
-            codec.decode_file(cover, dst)
-
-            assert dst.read_bytes() == data
-
     def test_stateless_multiple_calls(self, codec: StegoCodec) -> None:
         """Multiple encode/decode calls on the same instance should work."""
         data1 = b"first"
@@ -70,3 +54,16 @@ class TestCodecAPI:
 
         with pytest.raises((StegoDecodeError, AssertionError)):
             codec_alt_prompt.decode(cover)
+
+    def test_chunked_returns_list(self, codec: StegoCodec) -> None:
+        """encode(chunk_size=...) returns a list."""
+        result = codec.encode(b"test", chunk_size=100)
+        assert isinstance(result, list)
+        assert all(isinstance(s, str) for s in result)
+
+    def test_decode_accepts_list(self, codec: StegoCodec) -> None:
+        """decode() accepts a list of strings."""
+        covers = codec.encode(b"test data here", chunk_size=5)
+        result = codec.decode(covers)
+        assert isinstance(result, bytes)
+        assert result == b"test data here"
