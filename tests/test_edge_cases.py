@@ -75,7 +75,7 @@ class TestEdgeCases:
 
     def test_repeated_byte(self, codec: StegoCodec) -> None:
         """Repeated bytes should round-trip."""
-        data = b"\xAA" * 20
+        data = b"\xaa" * 20
         cover = codec.encode(data)
         assert codec.decode(cover) == data
 
@@ -92,14 +92,16 @@ class TestSeedPhrases:
     def test_no_prefix_collisions(self) -> None:
         """No seed phrase should be a prefix of another."""
         from mostegollm.seeds import SEED_PHRASES
+
         for i, a in enumerate(SEED_PHRASES):
-            for b in SEED_PHRASES[i + 1:]:
+            for b in SEED_PHRASES[i + 1 :]:
                 assert not a.startswith(b), f"{a!r} starts with {b!r}"
                 assert not b.startswith(a), f"{b!r} starts with {a!r}"
 
     def test_validation_runs_at_import(self) -> None:
         """The module should validate prefix collisions on import."""
         from mostegollm.seeds import SEED_PHRASES
+
         assert len(SEED_PHRASES) == 256
 
 
@@ -109,6 +111,7 @@ class TestCRC:
     def test_header_includes_crc(self) -> None:
         """New header should be 10 bytes (magic + length + crc32)."""
         from mostegollm.utils import HEADER_SIZE
+
         assert HEADER_SIZE == 10
 
     def test_crc_roundtrip(self) -> None:

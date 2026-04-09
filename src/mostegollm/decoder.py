@@ -14,7 +14,6 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from .encoder import (
     HALF,
-    PRECISION,
     QUARTER,
     TOP_K,
     WHOLE,
@@ -24,7 +23,6 @@ from .encoder import (
 )
 from .utils import (
     HEADER_BITS,
-    HEADER_SIZE,
     StegoDecodeError,
     bits_to_bytes,
     unpack_header,
@@ -99,12 +97,20 @@ def decode(
         # Get the same distribution the encoder saw at this position,
         # then apply the same BPE merge filter.
         tok_ids, cum_probs, past_kv = _get_token_distribution(
-            model, next_input, device, top_k=top_k, temperature=temperature,
+            model,
+            next_input,
+            device,
+            top_k=top_k,
+            temperature=temperature,
             past_key_values=past_kv,
         )
         tok_ids, cum_probs = _filter_distribution(
-            tokenizer, prev_token_id, tok_ids, cum_probs,
-            non_rt_tokens, merge_cache,
+            tokenizer,
+            prev_token_id,
+            tok_ids,
+            cum_probs,
+            non_rt_tokens,
+            merge_cache,
         )
 
         # Find the index of this token in the distribution

@@ -318,12 +318,20 @@ def encode(
         # Get distribution at current position, then filter out tokens that
         # would cause BPE merge mismatches on decode→encode round-trip.
         token_ids, cum_probs, past_kv = _get_token_distribution(
-            model, next_input, device, top_k=top_k, temperature=temperature,
+            model,
+            next_input,
+            device,
+            top_k=top_k,
+            temperature=temperature,
             past_key_values=past_kv,
         )
         token_ids, cum_probs = _filter_distribution(
-            tokenizer, prev_token_id, token_ids, cum_probs,
-            non_rt_tokens, merge_cache,
+            tokenizer,
+            prev_token_id,
+            token_ids,
+            cum_probs,
+            non_rt_tokens,
+            merge_cache,
         )
         n_tokens = len(token_ids)
         range_size = high - low

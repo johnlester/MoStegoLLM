@@ -61,7 +61,11 @@ class TestFilterDistribution:
 
         filtered_ids, filtered_cum = _filter_distribution(
             FakeTokenizer(),  # type: ignore[arg-type]
-            None, token_ids, cum_probs, non_rt, merge_cache,
+            None,
+            token_ids,
+            cum_probs,
+            non_rt,
+            merge_cache,
         )
         assert 20 not in filtered_ids
         assert 10 in filtered_ids
@@ -82,7 +86,12 @@ class TestFilterDistribution:
         merge_cache: dict[tuple[int, int], bool] = {}
 
         filtered_ids, filtered_cum = _filter_distribution(
-            tokenizer, newline_id, token_ids, cum_probs, non_rt, merge_cache,
+            tokenizer,
+            newline_id,
+            token_ids,
+            cum_probs,
+            non_rt,
+            merge_cache,
         )
         # The newline-after-newline should be filtered out (it merges)
         assert newline_id not in filtered_ids
@@ -102,7 +111,12 @@ class TestFilterDistribution:
         merge_cache: dict[tuple[int, int], bool] = {}
 
         filtered_ids, filtered_cum = _filter_distribution(
-            tokenizer, the_id, token_ids, cum_probs, non_rt, merge_cache,
+            tokenizer,
+            the_id,
+            token_ids,
+            cum_probs,
+            non_rt,
+            merge_cache,
         )
         # At least one token should survive
         assert len(filtered_ids) > 0
@@ -120,7 +134,11 @@ class TestFilterDistribution:
 
         filtered_ids, filtered_cum = _filter_distribution(
             FakeTokenizer(),  # type: ignore[arg-type]
-            None, token_ids, cum_probs, non_rt, merge_cache,
+            None,
+            token_ids,
+            cum_probs,
+            non_rt,
+            merge_cache,
         )
         # Fallback: return original
         assert filtered_ids == token_ids
@@ -130,17 +148,18 @@ class TestFilterDistribution:
 class TestBPEFilterRoundTrip:
     """End-to-end tests verifying the BPE filter prevents decode failures."""
 
-    @pytest.mark.parametrize("payload", [
-        b"\x00" * 10,
-        b"\xff" * 10,
-        b"newlines\n\n\ntest",
-        b"dots...and,,commas",
-        bytes(range(256)),
-        b"A" * 50,
-    ])
-    def test_various_payloads_roundtrip(
-        self, codec: StegoCodec, payload: bytes
-    ) -> None:
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            b"\x00" * 10,
+            b"\xff" * 10,
+            b"newlines\n\n\ntest",
+            b"dots...and,,commas",
+            bytes(range(256)),
+            b"A" * 50,
+        ],
+    )
+    def test_various_payloads_roundtrip(self, codec: StegoCodec, payload: bytes) -> None:
         """Various payloads that previously triggered BPE issues should round-trip."""
         cover = codec.encode(payload)
         recovered = codec.decode(cover)
@@ -149,6 +168,7 @@ class TestBPEFilterRoundTrip:
     def test_random_bytes_roundtrip(self, codec: StegoCodec) -> None:
         """Random binary data should round-trip reliably."""
         import hashlib
+
         for i in range(3):
             payload = hashlib.sha256(f"test-{i}".encode()).digest()[:16]
             cover = codec.encode(payload)

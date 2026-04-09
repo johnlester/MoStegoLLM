@@ -94,9 +94,7 @@ class TestEncryptedRoundTrip:
 class TestAvalancheEffect:
     """Encryption should cause early, pervasive divergence in cover text."""
 
-    def test_one_char_difference_diverges_early(
-        self, codec_encrypted: StegoCodec
-    ) -> None:
+    def test_one_char_difference_diverges_early(self, codec_encrypted: StegoCodec) -> None:
         msg_a = b"Hello, world!"
         msg_b = b"Hello, World!"  # single-char difference
 

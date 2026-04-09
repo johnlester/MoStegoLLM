@@ -19,4 +19,5 @@ class TestCapacityLimits:
     def test_max_tokens_error_message(self) -> None:
         """Exceeding MAX_TOKENS should raise StegoEncodeError with clear message."""
         from mostegollm.encoder import MAX_TOKENS
+
         assert MAX_TOKENS == 8192

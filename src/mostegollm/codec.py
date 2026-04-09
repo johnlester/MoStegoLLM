@@ -11,10 +11,7 @@ from .encoder import TOP_K, encode as _encode
 from .model import DEFAULT_PROMPT, PRIMARY_MODEL, ModelInfo, get_model_info, list_models, load_model
 from .seeds import match_seed, select_seed
 from .utils import (
-    HEADER_BITS,
     StegoDecodeError,
-    StegoEncodeError,
-    StegoModelError,
     StegoStats,
 )
 
@@ -263,9 +260,7 @@ class StegoCodec:
         model, tokenizer, device = self._ensure_model()
 
         # Split plaintext into chunks, then optionally encrypt each one.
-        chunks: list[bytes] = [
-            data[i : i + chunk_size] for i in range(0, len(data), chunk_size)
-        ]
+        chunks: list[bytes] = [data[i : i + chunk_size] for i in range(0, len(data), chunk_size)]
         if self._password is not None:
             chunks = [_encrypt(chunk, self._password) for chunk in chunks]
 
@@ -365,7 +360,6 @@ class StegoCodec:
         )
         cover_text = seed + cover_text
         total_tokens = len(token_ids)
-        payload_bits = total_bits - HEADER_BITS
         bits_per_token = total_bits / total_tokens if total_tokens > 0 else 0.0
 
         return StegoStats(

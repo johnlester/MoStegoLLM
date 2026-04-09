@@ -280,7 +280,7 @@ _SORTED_PHRASES = sorted(SEED_PHRASES, key=len, reverse=True)
 
 # Validate no phrase is a prefix of another (required for unambiguous matching).
 for _i, _a in enumerate(SEED_PHRASES):
-    for _b in SEED_PHRASES[_i + 1:]:
+    for _b in SEED_PHRASES[_i + 1 :]:
         if _a.startswith(_b) or _b.startswith(_a):
             raise ValueError(f"Seed phrase prefix collision: {_a!r} / {_b!r}")
 del _i, _a, _b  # Clean up module namespace
@@ -309,7 +309,7 @@ def match_seed(cover_text: str) -> tuple[str, str]:
     """
     for phrase in _SORTED_PHRASES:
         if cover_text.startswith(phrase):
-            return phrase, cover_text[len(phrase):]
+            return phrase, cover_text[len(phrase) :]
     raise ValueError(
         "Cover text does not start with any known seed phrase. "
         "It may have been encoded with a different version or a custom prompt."

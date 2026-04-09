@@ -48,9 +48,7 @@ def decrypt(blob: bytes, password: str) -> bytes:
     """
     min_len = _SALT_LEN + _NONCE_LEN + 16  # at least tag
     if len(blob) < min_len:
-        raise StegoCryptoError(
-            f"Encrypted blob too short ({len(blob)} bytes, minimum {min_len})"
-        )
+        raise StegoCryptoError(f"Encrypted blob too short ({len(blob)} bytes, minimum {min_len})")
     salt = blob[:_SALT_LEN]
     nonce = blob[_SALT_LEN : _SALT_LEN + _NONCE_LEN]
     ciphertext = blob[_SALT_LEN + _NONCE_LEN :]

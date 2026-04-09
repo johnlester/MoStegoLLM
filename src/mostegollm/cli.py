@@ -23,16 +23,12 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="mostegollm",
         description="Hide secret data inside LLM-generated English prose.",
     )
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="print diagnostics to stderr"
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="print diagnostics to stderr")
     parser.add_argument(
         "-q", "--quiet", action="store_true", help="suppress model loading output on stderr"
     )
     parser.add_argument("--model", default=PRIMARY_MODEL, help="HuggingFace model name")
-    parser.add_argument(
-        "--device", default="auto", help="torch device (auto, cpu, cuda, …)"
-    )
+    parser.add_argument("--device", default="auto", help="torch device (auto, cpu, cuda, …)")
     parser.add_argument("--top-k", type=int, default=TOP_K, help="top-k filtering width")
     parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="seed prompt for generation")
 
@@ -49,15 +45,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="continue generating until cover text ends at a sentence boundary",
     )
-    enc.add_argument(
-        "-p", "--password", default=None, help="encrypt payload with AES-256-GCM"
-    )
-    enc.add_argument(
-        "--chunk-size", type=int, default=None, help="split into chunks of N bytes"
-    )
-    enc.add_argument(
-        "--stats", action="store_true", help="print encoding stats to stderr"
-    )
+    enc.add_argument("-p", "--password", default=None, help="encrypt payload with AES-256-GCM")
+    enc.add_argument("--chunk-size", type=int, default=None, help="split into chunks of N bytes")
+    enc.add_argument("--stats", action="store_true", help="print encoding stats to stderr")
 
     # -- models --------------------------------------------------------
     sub.add_parser("models", help="list recommended models")
@@ -67,11 +57,12 @@ def _build_parser() -> argparse.ArgumentParser:
     dec.add_argument("text", nargs="?", default=None, help="cover text to decode")
     dec.add_argument("-f", "--file", default=None, help="file containing cover text")
     dec.add_argument("-o", "--output", default=None, help="write decoded bytes to file")
+    dec.add_argument("-p", "--password", default=None, help="decrypt payload with AES-256-GCM")
     dec.add_argument(
-        "-p", "--password", default=None, help="decrypt payload with AES-256-GCM"
-    )
-    dec.add_argument(
-        "-t", "--text", dest="text_mode", action="store_true",
+        "-t",
+        "--text",
+        dest="text_mode",
+        action="store_true",
         help="decode and print as UTF-8 text",
     )
 
@@ -120,9 +111,7 @@ def _cmd_models() -> None:
         print(f"  {m.name:<{name_w}}  {m.parameters:<{param_w}}  {m.description}{gated}")
 
 
-def _cmd_encode(
-    codec: StegoCodec, args: argparse.Namespace, verbose: bool, quiet: bool
-) -> None:
+def _cmd_encode(codec: StegoCodec, args: argparse.Namespace, verbose: bool, quiet: bool) -> None:
     raw = _read_input(args)
     data = raw if isinstance(raw, bytes) else raw.encode("utf-8")
 
@@ -168,9 +157,7 @@ def _cmd_encode(
             sys.stdout.write("\n")
 
 
-def _cmd_decode(
-    codec: StegoCodec, args: argparse.Namespace, verbose: bool, quiet: bool
-) -> None:
+def _cmd_decode(codec: StegoCodec, args: argparse.Namespace, verbose: bool, quiet: bool) -> None:
     raw = _read_input(args)
     cover_text = raw if isinstance(raw, str) else raw.decode("utf-8")
 
@@ -252,7 +239,7 @@ def main(argv: list[str] | None = None) -> None:
             _cmd_encode(codec, args, verbose, quiet)
         else:
             _cmd_decode(codec, args, verbose, quiet)
-    except StegoDecodeError as exc:
+    except StegoDecodeError:
         print(
             "Error: could not decode -- wrong model or corrupted text.",
             file=sys.stderr,
@@ -268,7 +255,7 @@ def main(argv: list[str] | None = None) -> None:
         if verbose:
             traceback.print_exc(file=sys.stderr)
         sys.exit(1)
-    except StegoCryptoError as exc:
+    except StegoCryptoError:
         print(
             "Error: decryption failed -- wrong password or tampered data.",
             file=sys.stderr,

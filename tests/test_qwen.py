@@ -79,7 +79,7 @@ class TestQwenRoundTrip:
         assert qwen_codec.decode(cover) == data
 
     def test_repeated_byte(self, qwen_codec: StegoCodec) -> None:
-        data = b"\xAA" * 20
+        data = b"\xaa" * 20
         cover = qwen_codec.encode(data)
         assert qwen_codec.decode(cover) == data
 

@@ -45,9 +45,7 @@ class TestCodecAPI:
         assert codec.decode(cover1) == data1
         assert codec.decode(cover2) == data2
 
-    def test_wrong_prompt_fails(
-        self, codec: StegoCodec, codec_alt_prompt: StegoCodec
-    ) -> None:
+    def test_wrong_prompt_fails(self, codec: StegoCodec, codec_alt_prompt: StegoCodec) -> None:
         """Decoding with a different prompt should fail or return wrong data."""
         data = b"prompt sensitive"
         cover = codec.encode(data)
