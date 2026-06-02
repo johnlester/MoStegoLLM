@@ -12,13 +12,11 @@ import zlib
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
+from .coding import HALF, QUARTER, WHOLE, step_coding
 from .encoder import (
-    HALF,
-    QUARTER,
     TOP_K,
-    WHOLE,
-    _filter_distribution,
-    _get_token_distribution,
+    _filter_tokens,
+    _get_topk_logits,
     get_non_roundtrip_tokens,
 )
 from .utils import (
@@ -93,10 +91,9 @@ def decode(
     extracted_bits: list[int] = []
 
     # Process each token in the cover text
-    for step, token_id in enumerate(cover_token_ids):
-        # Get the same distribution the encoder saw at this position,
-        # then apply the same BPE merge filter.
-        tok_ids, cum_probs, past_kv = _get_token_distribution(
+    for step_idx, token_id in enumerate(cover_token_ids):
+        # Same reproducible coding the encoder used.
+        tok_ids, logits, past_kv = _get_topk_logits(
             model,
             next_input,
             device,
@@ -104,30 +101,24 @@ def decode(
             temperature=temperature,
             past_key_values=past_kv,
         )
-        tok_ids, cum_probs = _filter_distribution(
-            tokenizer,
-            prev_token_id,
-            tok_ids,
-            cum_probs,
-            non_rt_tokens,
-            merge_cache,
+        tok_ids, logits = _filter_tokens(
+            tokenizer, prev_token_id, tok_ids, logits, non_rt_tokens, merge_cache
         )
+        step = step_coding(tok_ids, logits)
 
-        # Find the index of this token in the distribution
         try:
-            j = tok_ids.index(token_id)
-        except ValueError:
+            ilo, ihi = step.token_to_run[token_id]
+        except KeyError:
             raise StegoDecodeError(
-                f"Token ID {token_id} ('{tokenizer.decode([token_id])}') at step {step} "
-                f"was not found in the top-{top_k} distribution. "
+                f"Token ID {token_id} ('{tokenizer.decode([token_id])}') at step {step_idx} "
+                f"was not found in the reproducible top-{top_k} distribution. "
                 "This usually means the cover text was corrupted, the wrong model "
                 "was used, or the prompt does not match."
             )
 
-        # Narrow the interval (must match the encoder exactly)
         range_size = high - low
-        sym_low = low + (range_size * cum_probs[j]) // WHOLE
-        sym_high = low + (range_size * cum_probs[j + 1]) // WHOLE
+        sym_low = low + (range_size * ilo) // WHOLE
+        sym_high = low + (range_size * ihi) // WHOLE
         low = sym_low
         high = sym_high
 

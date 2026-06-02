@@ -13,6 +13,7 @@ import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 from transformers.cache_utils import DynamicCache
 
+from .coding import HALF, K, PRECISION, QUARTER, WHOLE, step_coding
 from .utils import (
     StegoEncodeError,
     bytes_to_bits,
@@ -22,20 +23,14 @@ from .utils import (
 # Cache of non-round-tripping token sets, keyed by tokenizer identity.
 _NON_RT_CACHE: dict[int, frozenset[int]] = {}
 
-# Arithmetic coding precision (number of bits for the interval)
-PRECISION = 32
-WHOLE = 1 << PRECISION  # 2^32
-HALF = WHOLE >> 1  # 2^31
-QUARTER = WHOLE >> 2  # 2^30
-
 # Maximum tokens to generate as a safety limit
 MAX_TOKENS = 8192
 
 # Maximum extra tokens past data-recoverable to search for a sentence boundary
 MAX_EXTRA_TOKENS = 100
 
-# Top-k tokens to consider from the distribution
-TOP_K = 256
+# Top-k tokens to consider from the distribution (kept for backward-compatible imports)
+TOP_K = K
 
 
 def get_non_roundtrip_tokens(tokenizer: PreTrainedTokenizerBase) -> frozenset[int]:
@@ -57,33 +52,26 @@ def get_non_roundtrip_tokens(tokenizer: PreTrainedTokenizerBase) -> frozenset[in
     return _NON_RT_CACHE[key]
 
 
-def _filter_distribution(
+def _filter_tokens(
     tokenizer: PreTrainedTokenizerBase,
     prev_token_id: int | None,
     token_ids: list[int],
-    cum_probs: list[int],
+    logits: list[float],
     non_rt_tokens: frozenset[int],
     merge_cache: dict[tuple[int, int], bool],
-) -> tuple[list[int], list[int]]:
-    """Remove tokens that would cause tokenizer round-trip mismatches.
+) -> tuple[list[int], list[float]]:
+    """Drop tokens that break a decode->encode round-trip, keeping logits paired.
 
-    Filters out:
-    1. Tokens that don't round-trip individually (byte fallbacks, etc.).
-    2. Tokens that would be merged with *prev_token_id* by the BPE tokenizer
-       during a decode→encode round-trip.
-
-    Returns a new ``(token_ids, cum_probs)`` pair with the filtered
-    distribution re-scaled to ``[0, WHOLE)``.
+    Filters (1) tokens that don't round-trip individually and (2) tokens that
+    would BPE-merge with *prev_token_id*. These checks are pure string ops, so
+    they are identical across platforms. Falls back to the unfiltered lists if
+    everything would be removed.
     """
-    widths: list[int] = []
     keep_ids: list[int] = []
-
-    for i, tid in enumerate(token_ids):
-        # Skip tokens that don't round-trip individually.
+    keep_logits: list[float] = []
+    for tid, lg in zip(token_ids, logits):
         if tid in non_rt_tokens:
             continue
-
-        # Skip tokens that would merge with the previous token.
         if prev_token_id is not None:
             pair = (prev_token_id, tid)
             if pair not in merge_cache:
@@ -92,38 +80,11 @@ def _filter_distribution(
                 merge_cache[pair] = re_enc != [prev_token_id, tid]
             if merge_cache[pair]:
                 continue
-
         keep_ids.append(tid)
-        widths.append(cum_probs[i + 1] - cum_probs[i])
-
+        keep_logits.append(lg)
     if not keep_ids:
-        # Shouldn't happen in practice; fall back to the unfiltered distribution.
-        return token_ids, cum_probs
-
-    # Rebuild cumulative distribution scaled to [0, WHOLE).
-    total_width = sum(widths)
-    new_cum = [0]
-    running = 0
-    for w in widths:
-        running += (w * WHOLE) // total_width
-        new_cum.append(running)
-    new_cum[-1] = WHOLE
-
-    # Ensure no zero-width intervals.
-    for i in range(1, len(new_cum)):
-        if new_cum[i] <= new_cum[i - 1]:
-            new_cum[i] = new_cum[i - 1] + 1
-
-    # Truncate if min-width adjustments pushed past WHOLE.
-    if new_cum[-1] > WHOLE:
-        for i in range(1, len(new_cum)):
-            if new_cum[i] >= WHOLE:
-                new_cum[i] = WHOLE
-                keep_ids = keep_ids[:i]
-                new_cum = new_cum[: i + 1]
-                break
-
-    return keep_ids, new_cum
+        return token_ids, logits
+    return keep_ids, keep_logits
 
 
 def _is_sentence_ending(tokenizer: PreTrainedTokenizerBase, token_id: int) -> bool:
@@ -132,83 +93,32 @@ def _is_sentence_ending(tokenizer: PreTrainedTokenizerBase, token_id: int) -> bo
     return len(text) > 0 and text[-1] in ".!?"
 
 
-def _get_token_distribution(
+def _get_topk_logits(
     model: PreTrainedModel,
     input_ids: torch.Tensor,
     device: torch.device,
-    top_k: int = TOP_K,
+    top_k: int = K,
     temperature: float = 1.0,
     past_key_values: DynamicCache | None = None,
-) -> tuple[list[int], list[int], DynamicCache]:
-    """Get the top-k token distribution from the model.
+) -> tuple[list[int], list[float], DynamicCache]:
+    """Return the top-k token ids and their (temperature-scaled) float64 logits.
 
-    Returns token IDs and their corresponding integer-scaled cumulative
-    probabilities suitable for arithmetic coding.
-
-    Args:
-        model: The language model.
-        input_ids: Current token sequence (batch_size=1), or a single token
-            when ``past_key_values`` is provided.
-        device: Torch device.
-        top_k: Number of top tokens to consider.
-        temperature: Temperature for softmax (1.0 = no change).
-        past_key_values: Optional KV-cache from a previous forward pass.
-
-    Returns:
-        A tuple of (token_ids, cum_probs, past_key_values) where:
-        - token_ids: list of top-k token IDs sorted by probability (descending)
-        - cum_probs: list of cumulative probability boundaries scaled to [0, WHOLE),
-          with length len(token_ids) + 1 (starts at 0, ends at WHOLE).
-        - past_key_values: Updated KV-cache for subsequent calls.
+    No softmax: the reproducible coder uses logit *order* and *gaps*, not
+    probability magnitudes.
     """
     with torch.no_grad():
         outputs = model(input_ids, past_key_values=past_key_values, use_cache=True)
-        logits = outputs.logits[0, -1, :]  # Last position logits
+        logits = outputs.logits[0, -1, :]
 
-    # Apply temperature
     if temperature != 1.0:
         logits = logits / temperature
 
-    # Use float64 for precision in probability computation
     logits_f64 = logits.to(dtype=torch.float64)
-    probs = torch.softmax(logits_f64, dim=-1)
-
-    # Get top-k
-    actual_k = min(top_k, probs.shape[0])
-    top_probs, top_indices = torch.topk(probs, actual_k)
-
-    # Renormalize top-k probabilities to sum to 1
-    top_probs = top_probs / top_probs.sum()
-
-    # Convert to integer-scaled cumulative distribution for arithmetic coding
-    token_ids = top_indices.cpu().tolist()
-    prob_values = top_probs.cpu().tolist()
-
-    # Build cumulative distribution scaled to [0, WHOLE)
-    cum_probs = [0]
-    running = 0
-    for p in prob_values:
-        running += int(p * WHOLE)
-        cum_probs.append(running)
-
-    # Fix rounding: ensure the last entry equals WHOLE exactly
-    cum_probs[-1] = WHOLE
-
-    # Ensure no zero-width intervals (each token must have at least width 1)
-    for i in range(1, len(cum_probs)):
-        if cum_probs[i] <= cum_probs[i - 1]:
-            cum_probs[i] = cum_probs[i - 1] + 1
-
-    # If adjustments pushed past WHOLE, truncate the token list
-    if cum_probs[-1] > WHOLE:
-        for i in range(1, len(cum_probs)):
-            if cum_probs[i] >= WHOLE:
-                cum_probs[i] = WHOLE
-                token_ids = token_ids[:i]
-                cum_probs = cum_probs[: i + 1]
-                break
-
-    return token_ids, cum_probs, outputs.past_key_values
+    actual_k = min(top_k, logits_f64.shape[0])
+    top = torch.topk(logits_f64, actual_k)
+    token_ids = top.indices.cpu().tolist()
+    logit_vals = top.values.cpu().tolist()
+    return token_ids, logit_vals, outputs.past_key_values
 
 
 def encode(
@@ -330,9 +240,9 @@ def encode(
                 f"Emitted {bits_emitted}/{total_bits} bits."
             )
 
-        # Get distribution at current position, then filter out tokens that
-        # would cause BPE merge mismatches on decode→encode round-trip.
-        token_ids, cum_probs, past_kv = _get_token_distribution(
+        # Reproducible rank-interval coding: top-k logits -> BPE filter ->
+        # sorted/run-merged fixed integer intervals.
+        token_ids, logits, past_kv = _get_topk_logits(
             model,
             next_input,
             device,
@@ -340,36 +250,29 @@ def encode(
             temperature=temperature,
             past_key_values=past_kv,
         )
-        token_ids, cum_probs = _filter_distribution(
-            tokenizer,
-            prev_token_id,
-            token_ids,
-            cum_probs,
-            non_rt_tokens,
-            merge_cache,
+        token_ids, logits = _filter_tokens(
+            tokenizer, prev_token_id, token_ids, logits, non_rt_tokens, merge_cache
         )
-        n_tokens = len(token_ids)
-        range_size = high - low
+        step = step_coding(token_ids, logits)
 
+        range_size = high - low
         if range_size <= 0:
             raise StegoEncodeError(
                 "Arithmetic coding interval collapsed (range_size <= 0). "
                 "This indicates a numerical precision issue."
             )
 
-        # Find which token interval contains `value`.
-        # Interval for token j: [low + range_size*cum_probs[j]//WHOLE,
-        #                         low + range_size*cum_probs[j+1]//WHOLE)
-        chosen_idx = n_tokens - 1
-        for j in range(n_tokens):
-            sym_high = low + (range_size * cum_probs[j + 1]) // WHOLE
-            if value < sym_high:
-                chosen_idx = j
+        # Navigate `value` into one interval; default to the last.
+        ilo, ihi, chosen_token_id = step.intervals[-1]
+        sym_low = low + (range_size * ilo) // WHOLE
+        sym_high = low + (range_size * ihi) // WHOLE
+        for cand_lo, cand_hi, rep in step.intervals:
+            cand_high = low + (range_size * cand_hi) // WHOLE
+            if value < cand_high:
+                chosen_token_id = rep
+                sym_low = low + (range_size * cand_lo) // WHOLE
+                sym_high = cand_high
                 break
-
-        # Narrow the interval
-        sym_low = low + (range_size * cum_probs[chosen_idx]) // WHOLE
-        sym_high = low + (range_size * cum_probs[chosen_idx + 1]) // WHOLE
         low = sym_low
         high = sym_high
 
@@ -402,7 +305,6 @@ def encode(
             value = (value << 1) | next_bit()
 
         # Append chosen token
-        chosen_token_id = token_ids[chosen_idx]
         generated_token_ids.append(chosen_token_id)
         next_input = torch.tensor([[chosen_token_id]], device=device)
         tokens_generated += 1
