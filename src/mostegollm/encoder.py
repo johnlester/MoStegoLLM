@@ -146,7 +146,7 @@ def encode(
         device: Torch device.
         prompt: The seed prompt (must match during decoding).
         top_k: Number of top tokens to consider per step.
-        temperature: Softmax temperature.
+        temperature: Logit scaling factor (divides logits before top-k selection; 1.0 = no change).
         sentence_boundary: If ``True``, continue generating tokens past the
             data-recoverable point until the cover text ends at a sentence
             boundary (``.``, ``!``, or ``?``).
@@ -262,7 +262,9 @@ def encode(
                 "This indicates a numerical precision issue."
             )
 
-        # Navigate `value` into one interval; default to the last.
+        # Navigate `value` into the interval that contains it. Pre-seed with the
+        # last interval as a safety net: its hi is WHOLE, so the loop's invariant
+        # (value < high) guarantees a match before the list is exhausted.
         ilo, ihi, chosen_token_id = step.intervals[-1]
         sym_low = low + (range_size * ilo) // WHOLE
         sym_high = low + (range_size * ihi) // WHOLE

@@ -49,7 +49,7 @@ def decode(
         device: Torch device.
         prompt: The seed prompt (must match what was used for encoding).
         top_k: Number of top tokens (must match encoding).
-        temperature: Softmax temperature (must match encoding).
+        temperature: Logit scaling factor; must match encoding.
         token_ids: Optional pre-computed token IDs. If ``None``, the cover
             text is re-tokenized.  Passing token IDs directly avoids any
             risk of tokenizer round-trip mismatches.
