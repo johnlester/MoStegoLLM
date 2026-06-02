@@ -42,31 +42,24 @@ def _build_widths(k: int) -> list[int]:
 
 
 def _build_cum(widths: list[int]) -> list[int]:
-    """Fixed cumulative boundaries: prefix sums of *widths* scaled to WHOLE.
+    """Fixed cumulative boundaries scaled to WHOLE, each interval width >= 1.
 
-    Integer multiply + floor-divide only, so the array is identical on every
-    platform. Forced strictly increasing (each interval width >= 1).
+    Reserves one unit per position (which guarantees a strictly increasing
+    result) and distributes the remaining ``WHOLE - len(widths)`` units by
+    weight. Integer-only (multiply + floor-divide), so the array is identical on
+    every platform. Constructed so it can never overflow WHOLE — unlike a naive
+    scale-then-bump approach, where the many width-1 tail entries would cascade
+    the +1 fixups past WHOLE.
     """
+    n = len(widths)
     total = sum(widths)
+    free = WHOLE - n  # > 0 since n (= K = 256) << WHOLE
     cum = [0]
-    running = 0
-    for w in widths:
-        running += w
-        cum.append((running * WHOLE) // total)
-    cum[-1] = WHOLE
-    # Enforce strictly increasing: for each i, if cum[i] <= cum[i-1],
-    # set cum[i] = cum[i-1] + 1. Stop before the last element.
-    for i in range(1, len(cum) - 1):
-        if cum[i] <= cum[i - 1]:
-            cum[i] = cum[i - 1] + 1
-    # Find the maximum value in cum[:-1] (all but the last)
-    max_val_before_last = max(cum[:-1])
-    # If max_val > WHOLE - 1, we need to rescale cum[:-1] to fit in [0, WHOLE-1]
-    if max_val_before_last > WHOLE - 1:
-        # Linearly rescale: map [cum[0], max_val] to [0, WHOLE-1]
-        # Actually, cum[0] = 0, so map [0, max_val] to [0, WHOLE-1]
-        for i in range(len(cum) - 1):
-            cum[i] = (cum[i] * (WHOLE - 1)) // max_val_before_last
+    acc = 0
+    for i, w in enumerate(widths):
+        acc += w
+        cum.append((i + 1) + (acc * free) // total)
+    cum[-1] = WHOLE  # already exact (total divides total*free); set for clarity
     return cum
 
 
