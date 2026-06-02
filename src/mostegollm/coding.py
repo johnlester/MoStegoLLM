@@ -11,6 +11,8 @@ See docs/superpowers/specs/2026-06-02-cross-platform-reproducible-coding-design.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 # Arithmetic-coding precision (shared by encoder and decoder).
 PRECISION = 32
 WHOLE = 1 << PRECISION  # 2^32
@@ -73,3 +75,52 @@ _WIDTHS = _build_widths(K)
 # interval independent of how many tokens survive filtering (m), so top-K cutoff
 # instability cannot desync the emitted token.
 CUM = _build_cum(_WIDTHS)
+
+
+@dataclass(frozen=True)
+class StepCoding:
+    """Per-step coding: a partition of [0, WHOLE) and a token->interval lookup.
+
+    Attributes:
+        intervals: list of (lo, hi, representative_token_id), sorted by lo,
+            tiling [0, WHOLE). The encoder navigates `value` into one of these
+            and emits its representative.
+        token_to_run: maps every surviving token_id to its run's (lo, hi). The
+            decoder looks up the observed token here.
+    """
+
+    intervals: list[tuple[int, int, int]]
+    token_to_run: dict[int, tuple[int, int]]
+
+
+def step_coding(token_ids: list[int], logits: list[float]) -> StepCoding:
+    """Build the rank-interval coding for one step.
+
+    Tokens are sorted by (logit DESC, token_id ASC); adjacent tokens whose logit
+    gap is < GUARD are merged into a run represented by its lowest token_id.
+    Each run is assigned a fixed integer interval from the constant CUM array
+    (the final occupied run extends to WHOLE).
+    """
+    order = sorted(range(len(token_ids)), key=lambda i: (-logits[i], token_ids[i]))
+    s_ids = [token_ids[i] for i in order]
+    s_log = [logits[i] for i in order]
+    m = len(s_ids)
+
+    intervals: list[tuple[int, int, int]] = []
+    token_to_run: dict[int, tuple[int, int]] = {}
+    i = 0
+    while i < m:
+        j = i
+        while j + 1 < m and (s_log[j] - s_log[j + 1]) < GUARD:
+            j += 1
+        lo = CUM[i]
+        # The final occupied run absorbs up to WHOLE so the partition always
+        # covers [0, WHOLE) regardless of how many tokens survived (m).
+        hi = WHOLE if j == m - 1 else CUM[j + 1]
+        members = s_ids[i : j + 1]
+        rep = min(members)
+        intervals.append((lo, hi, rep))
+        for t in members:
+            token_to_run[t] = (lo, hi)
+        i = j + 1
+    return StepCoding(intervals, token_to_run)
