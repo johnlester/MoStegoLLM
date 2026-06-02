@@ -98,8 +98,7 @@ def step_coding(token_ids: list[int], logits: list[float]) -> StepCoding:
 
     Tokens are sorted by (logit DESC, token_id ASC); adjacent tokens whose logit
     gap is < GUARD are merged into a run represented by its lowest token_id.
-    Each run is assigned a fixed integer interval from the constant CUM array
-    (the final occupied run extends to WHOLE).
+    Each run spanning sorted positions i..j is assigned the interval [CUM[i], CUM[j+1]) from the constant CUM array (the final occupied run extends to WHOLE).
     """
     order = sorted(range(len(token_ids)), key=lambda i: (-logits[i], token_ids[i]))
     s_ids = [token_ids[i] for i in order]

@@ -53,6 +53,12 @@ def test_step_coding_partitions_whole():
     assert set(sc.token_to_run) == {10, 20, 30, 40}
 
 
+def test_step_coding_single_token():
+    sc = coding.step_coding([99], [3.5])
+    assert sc.intervals == [(0, coding.WHOLE, 99)]
+    assert sc.token_to_run == {99: (0, coding.WHOLE)}
+
+
 def test_step_coding_is_sort_order_independent():
     a = coding.step_coding([30, 10, 20], [3.0, 5.0, 4.0])
     b = coding.step_coding([10, 20, 30], [5.0, 4.0, 3.0])
@@ -74,8 +80,14 @@ def test_run_merging_groups_near_ties():
 
 
 def test_emitted_run_is_stable_under_sub_guard_noise():
-    # Perturbing logits by < GUARD must not change any run interval.
-    ids = [7, 3, 9, 1]
-    base = [5.0, 3.0, 1.0, 0.5]
-    noisy = [v + (0.4 * coding.GUARD) * ((-1) ** i) for i, v in enumerate(base)]
+    # A near-tie pair (gap < GUARD) must stay in the same merged run even when
+    # logits are perturbed by noise well within GUARD.
+    ids = [1, 2, 3]
+    g = coding.GUARD
+    # gap(1,2) = g/2 (< GUARD -> merged); gap(2,3) huge (separate run)
+    base = [5.0, 5.0 - g / 2, 1.0]
+    # perturb each by g/5: gap(1,2) stays < GUARD, sort order preserved
+    noisy = [5.0 - g / 5, 5.0 - g / 2 + g / 5, 1.0 + g / 5]
     assert coding.step_coding(ids, base).intervals == coding.step_coding(ids, noisy).intervals
+    # sanity: the pair really is merged (2 runs, not 3)
+    assert len(coding.step_coding(ids, base).intervals) == 2
