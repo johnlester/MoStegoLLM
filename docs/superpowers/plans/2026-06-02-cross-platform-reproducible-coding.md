@@ -124,21 +124,24 @@ def _build_widths(k: int) -> list[int]:
 
 
 def _build_cum(widths: list[int]) -> list[int]:
-    """Fixed cumulative boundaries: prefix sums of *widths* scaled to WHOLE.
+    """Fixed cumulative boundaries scaled to WHOLE, each interval width >= 1.
 
-    Integer multiply + floor-divide only, so the array is identical on every
-    platform. Forced strictly increasing (each interval width >= 1).
+    Reserves one unit per position (which guarantees a strictly increasing
+    result) and distributes the remaining ``WHOLE - len(widths)`` units by
+    weight. Integer-only (multiply + floor-divide), so the array is identical on
+    every platform. Constructed so it can never overflow WHOLE — unlike a naive
+    scale-then-bump approach, where the many width-1 tail entries would cascade
+    the +1 fixups past WHOLE.
     """
+    n = len(widths)
     total = sum(widths)
+    free = WHOLE - n  # > 0 since n (= K = 256) << WHOLE
     cum = [0]
-    running = 0
-    for w in widths:
-        running += w
-        cum.append((running * WHOLE) // total)
-    cum[-1] = WHOLE
-    for i in range(1, len(cum)):
-        if cum[i] <= cum[i - 1]:
-            cum[i] = cum[i - 1] + 1
+    acc = 0
+    for i, w in enumerate(widths):
+        acc += w
+        cum.append((i + 1) + (acc * free) // total)
+    cum[-1] = WHOLE  # already exact (total divides total*free); set for clarity
     return cum
 
 
