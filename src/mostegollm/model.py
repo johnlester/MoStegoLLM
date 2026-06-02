@@ -110,12 +110,19 @@ def _resolve_device(device: str) -> torch.device:
 
 
 def _setup_determinism() -> None:
-    """Configure PyTorch for maximum determinism."""
+    """Configure PyTorch for maximum determinism.
+
+    Reduces cross-platform logit divergence (belt-and-suspenders; the rank-
+    interval coder does not depend on these for correctness).
+    """
     torch.manual_seed(0)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(0)
     torch.backends.cudnn.deterministic = True  # type: ignore[attr-defined]
     torch.backends.cudnn.benchmark = False  # type: ignore[attr-defined]
+    # Disable TF32 so matmul uses full float32 precision on GPU.
+    torch.backends.cuda.matmul.allow_tf32 = False  # type: ignore[attr-defined]
+    torch.backends.cudnn.allow_tf32 = False  # type: ignore[attr-defined]
 
 
 def load_model(
