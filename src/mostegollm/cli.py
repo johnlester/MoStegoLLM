@@ -18,24 +18,52 @@ from .utils import (
 )
 
 
+# Separator written between cover texts when encoding with --chunk-size, and
+# split on again during decode to reconstruct the chunk list.
+CHUNK_SEPARATOR = "\n---\n"
+
+
+def _add_global_args(p: argparse.ArgumentParser) -> None:
+    """Add options accepted either before *or* after the subcommand.
+
+    ``argparse`` normally only accepts parent-parser options before the
+    subcommand.  Adding them to both the parent and each subparser with
+    ``default=argparse.SUPPRESS`` lets them appear in either position without
+    the subparser's copy clobbering a value parsed by the parent.  Real
+    defaults are resolved in :func:`main` via ``getattr``.
+    """
+    p.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="print diagnostics to stderr",
+    )
+    p.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="suppress model loading output on stderr",
+    )
+    p.add_argument("--model", default=argparse.SUPPRESS, help="HuggingFace model name")
+    p.add_argument("--device", default=argparse.SUPPRESS, help="torch device (auto, cpu, cuda, …)")
+    p.add_argument("--top-k", type=int, default=argparse.SUPPRESS, help="top-k filtering width")
+    p.add_argument("--prompt", default=argparse.SUPPRESS, help="seed prompt for generation")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mostegollm",
         description="Hide secret data inside LLM-generated English prose.",
     )
-    parser.add_argument("-v", "--verbose", action="store_true", help="print diagnostics to stderr")
-    parser.add_argument(
-        "-q", "--quiet", action="store_true", help="suppress model loading output on stderr"
-    )
-    parser.add_argument("--model", default=PRIMARY_MODEL, help="HuggingFace model name")
-    parser.add_argument("--device", default="auto", help="torch device (auto, cpu, cuda, …)")
-    parser.add_argument("--top-k", type=int, default=TOP_K, help="top-k filtering width")
-    parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="seed prompt for generation")
+    _add_global_args(parser)
 
     sub = parser.add_subparsers(dest="command")
 
     # -- encode --------------------------------------------------------
     enc = sub.add_parser("encode", help="encode secret data into cover text")
+    _add_global_args(enc)
     enc.add_argument("text", nargs="?", default=None, help="string to encode")
     enc.add_argument("-f", "--file", default=None, help="file to encode")
     enc.add_argument("-o", "--output", default=None, help="write cover text to file")
@@ -54,6 +82,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # -- decode --------------------------------------------------------
     dec = sub.add_parser("decode", help="decode cover text back to secret data")
+    _add_global_args(dec)
     dec.add_argument("text", nargs="?", default=None, help="cover text to decode")
     dec.add_argument("-f", "--file", default=None, help="file containing cover text")
     dec.add_argument("-o", "--output", default=None, help="write decoded bytes to file")
@@ -126,7 +155,7 @@ def _cmd_encode(codec: StegoCodec, args: argparse.Namespace, verbose: bool, quie
     if chunk_size is not None:
         result = codec.encode(data, chunk_size=chunk_size)
         assert isinstance(result, list)
-        cover_text = "\n---\n".join(result)
+        cover_text = CHUNK_SEPARATOR.join(result)
         elapsed = time.perf_counter() - t0
         if show_stats:
             _log(f"Chunks:           {len(result)}")
@@ -161,8 +190,17 @@ def _cmd_decode(codec: StegoCodec, args: argparse.Namespace, verbose: bool, quie
     raw = _read_input(args)
     cover_text = raw if isinstance(raw, str) else raw.decode("utf-8")
 
+    # Chunked cover text (from `encode --chunk-size`) is joined by CHUNK_SEPARATOR.
+    # Split it back into the list form that codec.decode expects so the chained
+    # per-chunk prompts can be reconstructed.
+    cover_input: str | list[str]
+    if CHUNK_SEPARATOR in cover_text:
+        cover_input = cover_text.split(CHUNK_SEPARATOR)
+    else:
+        cover_input = cover_text
+
     t0 = time.perf_counter()
-    recovered = codec.decode(cover_text)
+    recovered = codec.decode(cover_input)
     elapsed = time.perf_counter() - t0
 
     if verbose:
@@ -198,29 +236,35 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_models()
         return
 
-    verbose = args.verbose
-    quiet = args.quiet
+    # Global options use argparse.SUPPRESS defaults (so they work before or
+    # after the subcommand); resolve real defaults here.
+    verbose = getattr(args, "verbose", False)
+    quiet = getattr(args, "quiet", False)
+    model_name = getattr(args, "model", PRIMARY_MODEL)
+    device = getattr(args, "device", "auto")
+    top_k = getattr(args, "top_k", TOP_K)
+    prompt = getattr(args, "prompt", DEFAULT_PROMPT)
 
     if verbose:
         import torch
 
-        device_str = args.device
+        device_str = device
         if device_str == "auto":
             device_str = "cuda" if torch.cuda.is_available() else "cpu"
         device_info = device_str
         if device_str.startswith("cuda") and torch.cuda.is_available():
             device_info = f"{device_str} — {torch.cuda.get_device_name()}"
         _log(f"Device: {device_info}")
-        _log(f"Loading model: {args.model}")
+        _log(f"Loading model: {model_name}")
 
     t_model = time.perf_counter()
     sentence_boundary = getattr(args, "sentence_boundary", False)
     password = getattr(args, "password", None)
     codec = StegoCodec(
-        model_name=args.model,
-        device=args.device,
-        prompt=args.prompt,
-        top_k=args.top_k,
+        model_name=model_name,
+        device=device,
+        prompt=prompt,
+        top_k=top_k,
         sentence_boundary=sentence_boundary,
         password=password,
     )
@@ -249,7 +293,7 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
     except StegoModelError as exc:
         print(
-            f"Error: could not load model '{args.model}'. {exc}",
+            f"Error: could not load model '{model_name}'. {exc}",
             file=sys.stderr,
         )
         if verbose:

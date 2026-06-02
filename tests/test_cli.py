@@ -67,6 +67,36 @@ class TestCLIDecode:
         assert "error" in dec.stderr.lower()
 
 
+class TestCLIChunked:
+    def test_chunked_roundtrip(self) -> None:
+        """encode --chunk-size output must decode back through the CLI."""
+        secret = "chunk round trip test " * 3
+        enc = _run(["encode", secret, "--chunk-size", "20"])
+        assert enc.returncode == 0
+        assert "\n---\n" in enc.stdout, "expected multiple chunks joined by separator"
+        dec = _run(["decode", "--text"], input_text=enc.stdout)
+        assert dec.returncode == 0
+        assert secret in dec.stdout
+
+
+class TestCLIParser:
+    """Fast parser-only checks (no model load) for global-flag placement."""
+
+    def test_global_flag_after_subcommand(self) -> None:
+        from mostegollm.cli import _build_parser
+
+        ns = _build_parser().parse_args(["encode", "hi", "--quiet", "--model", "X"])
+        assert getattr(ns, "quiet", False) is True
+        assert getattr(ns, "model", None) == "X"
+
+    def test_global_flag_before_subcommand(self) -> None:
+        from mostegollm.cli import _build_parser
+
+        ns = _build_parser().parse_args(["--quiet", "--model", "X", "encode", "hi"])
+        assert getattr(ns, "quiet", False) is True
+        assert getattr(ns, "model", None) == "X"
+
+
 class TestCLIModels:
     def test_models_list(self) -> None:
         result = _run(["models"])

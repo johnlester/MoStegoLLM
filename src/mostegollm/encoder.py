@@ -260,12 +260,27 @@ def encode(
     if total_bits == 0:
         raise StegoEncodeError("No data to encode")
 
-    # Helper to read the next bit (pads with 0 beyond the payload)
+    # Helper to read the next bit.  Beyond the payload we feed a deterministic
+    # pseudo-random stream rather than zeros.  A zero-valued arithmetic register
+    # makes token selection hug the bottom of every probability interval
+    # (degenerate, repetitive output with no sentence boundaries); a random
+    # value instead behaves like temperature-1 sampling and keeps the prose
+    # natural.  The decoder never reads these padding bits — the header length
+    # bounds the payload — so any deterministic stream is round-trip safe.
     bit_pos = 0
+    pad_state = 0x5354BEEF  # xorshift32 seed (deterministic encoding)
 
     def next_bit() -> int:
-        nonlocal bit_pos
-        b = bits[bit_pos] if bit_pos < total_bits else 0
+        nonlocal bit_pos, pad_state
+        if bit_pos < total_bits:
+            b = bits[bit_pos]
+        else:
+            x = pad_state
+            x ^= (x << 13) & 0xFFFFFFFF
+            x ^= x >> 17
+            x ^= (x << 5) & 0xFFFFFFFF
+            pad_state = x & 0xFFFFFFFF
+            b = pad_state & 1
         bit_pos += 1
         return b
 
