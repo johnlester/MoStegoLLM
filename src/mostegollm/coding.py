@@ -28,11 +28,14 @@ GUARD = 1e-3
 # Width schedule: geometric decay via an integer-only recurrence. Model-agnostic.
 _DECAY_NUM = 7
 _DECAY_DEN = 8
+# _SEED is intentionally smaller than (8/7)^256; ranks ~196-255 plateau at width
+# 1 via the max(1, ...) floor. reserve-one-unit in _build_cum keeps those tail
+# entries distinct in CUM, so the plateau is harmless.
 _SEED = 1 << 40
 
 
 def _build_widths(k: int) -> list[int]:
-    """Integer geometric-decay widths: w[i] = max(1, w[i-1] * NUM // DEN)."""
+    """Integer geometric-decay widths: widths[0] = _SEED, widths[i] = max(1, widths[i-1] * _DECAY_NUM // _DECAY_DEN)."""
     widths: list[int] = []
     w = _SEED
     for _ in range(k):

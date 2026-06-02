@@ -11,6 +11,7 @@ def test_constants_are_integers():
     assert coding.QUARTER == coding.WHOLE >> 2
     assert all(isinstance(w, int) for w in coding._WIDTHS)
     assert len(coding._WIDTHS) == coding.K
+    assert all(isinstance(v, int) for v in coding.CUM)
 
 
 def test_widths_are_non_increasing_and_positive():
@@ -28,6 +29,9 @@ def test_cum_is_well_formed():
 
 
 def test_cum_is_a_fixed_constant():
-    # Same object/values every access; never recomputed from floats.
-    assert coding.CUM is coding.CUM
+    # Golden spot-values guard against accidental changes to the schedule
+    # constants (_SEED / _DECAY_*); CUM is frozen once chosen.
+    assert coding.CUM[1] == 536870881
+    assert coding.CUM[128] == 4294967005
+    assert coding.CUM[256] == 4294967296
     assert coding.CUM == coding._build_cum(coding._WIDTHS)
