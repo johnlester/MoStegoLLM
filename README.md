@@ -186,10 +186,13 @@ payload is encrypted with AES-256-GCM before encoding and decrypted after decodi
 Key derivation uses PBKDF2-HMAC-SHA256 with 600,000 iterations and a random salt. An
 attacker who obtains the cover text cannot recover the payload without the password.
 
-**Cross-platform compatibility caveat:** Decoding requires the exact same PyTorch
-version, device type, and model weights as encoding. Floating-point arithmetic
-differences between PyTorch versions or between CPU and GPU can cause the reconstructed
-token distributions to diverge, making the payload unrecoverable.
+**Cross-platform compatibility:** As of 0.3.0, decoding no longer requires the
+same PyTorch version or device type as encoding — the coder assigns
+arithmetic-coding intervals by token *rank* (a quantity stable across
+floating-point regimes) rather than by probability magnitude. You still need
+the **same model weights**. Any rare residual divergence is caught by the
+CRC-32 integrity check, so a mismatch fails loudly rather than returning corrupt
+data.
 
 **Integrity:** Each encoded message includes a CRC-32 checksum in the header for basic
 integrity validation. This is not a cryptographic MAC and does not protect against

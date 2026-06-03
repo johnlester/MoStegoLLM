@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mostegollm"
-version = "0.2.0"
+version = "0.3.0"
 description = "Steganographic text encoding/decoding using LLM token distributions"
 readme = "README.md"
 license = "MIT"
