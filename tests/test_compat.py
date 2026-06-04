@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import dataclasses
+
 import pytest
 
 from mostegollm.compat import (
+    FailureClass,
     TestVector,
     current_env,
     lib_version,
@@ -84,3 +87,35 @@ def test_make_then_verify_round_trips(codec, payload):
     result = verify_vector(vector, model=model, tokenizer=tok, device=dev)
     assert result.ok, result.detail
     assert result.failure_class is None
+
+
+def test_verify_detects_retokenization_drift(codec):
+    model, tok, dev = codec._ensure_model()
+    good = make_vector(
+        b"hello",
+        model=model,
+        tokenizer=tok,
+        device=dev,
+        prompt="According to experts,",
+        model_name=codec._model_name,
+    )
+    bad = dataclasses.replace(good, generated_token_ids=good.generated_token_ids + [999999])
+    result = verify_vector(bad, model=model, tokenizer=tok, device=dev)
+    assert not result.ok
+    assert result.failure_class == FailureClass.RETOK_DRIFT
+
+
+def test_verify_detects_payload_mismatch(codec):
+    model, tok, dev = codec._ensure_model()
+    good = make_vector(
+        b"hello",
+        model=model,
+        tokenizer=tok,
+        device=dev,
+        prompt="According to experts,",
+        model_name=codec._model_name,
+    )
+    bad = dataclasses.replace(good, payload_sha256="de" * 32)
+    result = verify_vector(bad, model=model, tokenizer=tok, device=dev)
+    assert not result.ok
+    assert result.failure_class == FailureClass.LOGIT_DIVERGENCE
