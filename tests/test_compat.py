@@ -170,3 +170,19 @@ def test_verify_rejects_unknown_schema(codec):
     bad = dataclasses.replace(good, schema="mostegollm-testvector/999")
     with pytest.raises(ValueError, match="schema"):
         verify_vector(bad, model=model, tokenizer=tok, device=dev)
+
+
+def test_canonical_payloads_are_deterministic():
+    import importlib.util
+    from pathlib import Path
+
+    spec_path = Path(__file__).parent.parent / "compat" / "payloads.py"
+    spec = importlib.util.spec_from_file_location("compat_payloads", spec_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    mod2 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod2)
+    assert mod.CANONICAL_PAYLOADS == mod2.CANONICAL_PAYLOADS
+    assert all(isinstance(v, bytes) for v in mod.CANONICAL_PAYLOADS.values())
+    assert len(mod.CANONICAL_PROMPTS) >= 2
