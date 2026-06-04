@@ -55,7 +55,7 @@ def _sample_vector() -> TestVector:
         model="HuggingFaceTB/SmolLM-135M",
         model_revision="abc123",
         prompt="According to experts,",
-        settings={"top_k": 256, "temperature": 1.0, "sentence_boundary": False, "password": None},
+        settings={"top_k": 256, "temperature": 1.0, "sentence_boundary": False, "encrypted": False},
         payload_sha256="00" * 32,
         payload_hex="68656c6c6f",
         cover_text="Some cover text with unicode café 🙂.",
@@ -367,7 +367,10 @@ def make_vector(
         model=model_name,
         model_revision=model_revision if model_revision is not None else model_commit_hash(model),
         prompt=prompt,
-        settings={**s, "password": password},
+        # SECURITY: never persist the password in a portable/committed artifact.
+        # Record only a non-secret marker; the verifier supplies the password
+        # out-of-band.
+        settings={**s, "encrypted": bool(password)},
         payload_sha256=hashlib.sha256(payload).hexdigest(),
         payload_hex=payload.hex(),
         cover_text=cover,
@@ -382,8 +385,13 @@ def verify_vector(
     model: object,
     tokenizer: object,
     device: object,
+    password: str | None = None,
 ) -> VerifyResult:
-    """Decode *vector* in the current environment and classify any failure."""
+    """Decode *vector* in the current environment and classify any failure.
+
+    For encrypted vectors (``settings["encrypted"]`` is True) the caller must
+    supply *password* out-of-band — it is deliberately not stored in the vector.
+    """
     env = current_env(device)
 
     # (1) Single-version invariant: the cover must re-tokenize to the IDs the
@@ -397,9 +405,12 @@ def verify_vector(
             env,
         )
 
+    encrypted = vector.settings.get("encrypted", False)
+    if encrypted and password is None:
+        raise ValueError("vector is encrypted; supply password= to verify_vector")
+
     # (2) Decode + integrity. Re-tokenization matched, so any desync here is the
     # coder diverging (logit ordering past the GUARD margin).
-    password = vector.settings.get("password")
     try:
         decoded = _decode(
             vector.cover_text,
@@ -410,7 +421,7 @@ def verify_vector(
             top_k=vector.settings.get("top_k", 256),
             temperature=vector.settings.get("temperature", 1.0),
         )
-        if password:
+        if encrypted:
             decoded = _decrypt(decoded, password)
     except (StegoDecodeError, StegoCryptoError) as exc:
         return VerifyResult(
@@ -513,12 +524,25 @@ def test_encrypted_vector_round_trips(codec):
     vector = make_vector(b"secret payload", model=model, tokenizer=tok, device=dev,
                          prompt="According to experts,", model_name=codec._model_name,
                          password="pw-123")
-    assert vector.settings["password"] == "pw-123"
+    # SECURITY: the password is NOT persisted; only a non-secret marker is.
+    assert vector.settings["encrypted"] is True
+    assert "password" not in vector.settings
     # payload_sha256 is of the PLAINTEXT, not the ciphertext that the cover encodes.
     import hashlib as _h
     assert vector.payload_sha256 == _h.sha256(b"secret payload").hexdigest()
-    result = verify_vector(vector, model=model, tokenizer=tok, device=dev)
+    # Password is supplied out-of-band to the verifier.
+    result = verify_vector(vector, model=model, tokenizer=tok, device=dev, password="pw-123")
     assert result.ok, result.detail
+
+
+def test_verify_encrypted_without_password_raises(codec):
+    model, tok, dev = codec._ensure_model()
+    vector = make_vector(b"secret payload", model=model, tokenizer=tok, device=dev,
+                         prompt="According to experts,", model_name=codec._model_name,
+                         password="pw-123")
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="encrypted"):
+        verify_vector(vector, model=model, tokenizer=tok, device=dev)
 ```
 
 - [ ] **Step 2: Run test to verify it passes**

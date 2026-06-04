@@ -79,7 +79,7 @@ self-describing JSON record (stored one-per-line as JSONL):
   "model": "HuggingFaceTB/SmolLM-135M", "model_revision": "<HF commit sha>",
   "prompt": "According to experts,",
   "settings": {"top_k": 256, "temperature": 1.0, "sentence_boundary": false,
-               "password": null},
+               "encrypted": false},
   "payload_sha256": "<hex>", "payload_hex": "<hex>",
   "cover_text": "...",
   "generated_token_ids": [ ... ],
@@ -95,6 +95,13 @@ self-describing JSON record (stored one-per-line as JSONL):
   confused for a coder change.
 - `source_env` makes every result traceable to the exact environment that
   produced it.
+- **The AES password is NEVER persisted in a vector.** A vector is a portable
+  artifact that gets committed and uploaded; storing the secret in it would leak
+  it. `settings.encrypted` is only a boolean marker. The verifier receives the
+  password out-of-band (`verify_vector(..., password=...)`). For encrypted
+  vectors, `payload_sha256`/`payload_hex` are still of the *plaintext* (what a
+  correct decode+decrypt must reproduce). The committed golden corpus uses no
+  password, so the offline guard needs no secret.
 
 Everything else is "produce vectors" or "consume (decode/verify) vectors."
 
