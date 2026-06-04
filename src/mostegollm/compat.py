@@ -9,8 +9,11 @@ docs/superpowers/specs/2026-06-03-cloud-cross-compatibility-testing-design.md
 from __future__ import annotations
 
 import json
+import platform
 from dataclasses import asdict, dataclass
 from os import PathLike
+
+import torch
 
 SCHEMA = "mostegollm-testvector/1"
 
@@ -75,3 +78,40 @@ def read_vectors(path: str | PathLike) -> list[TestVector]:
             if line:
                 out.append(TestVector.from_json(line))
     return out
+
+
+def current_env(device: object) -> dict[str, str]:
+    """Capture environment metadata relevant to cross-platform decode reproducibility.
+
+    Args:
+        device: The torch device (or its string form) in use.
+
+    Returns:
+        A dict of library versions plus device/OS/architecture, all as strings.
+    """
+    import tokenizers
+    import transformers
+
+    return {
+        "torch": torch.__version__,
+        "transformers": transformers.__version__,
+        "tokenizers": tokenizers.__version__,
+        "device": str(device),
+        "os": platform.system(),
+        "arch": platform.machine(),
+    }
+
+
+def lib_version() -> str:
+    """Return the installed ``mostegollm`` version, or ``"unknown"`` if undeterminable."""
+    try:
+        from importlib.metadata import version
+
+        return version("mostegollm")
+    except Exception:
+        return "unknown"
+
+
+def model_commit_hash(model: object) -> str | None:
+    """Return the model's resolved HF commit hash, or ``None`` if not recorded."""
+    return getattr(getattr(model, "config", None), "_commit_hash", None)
