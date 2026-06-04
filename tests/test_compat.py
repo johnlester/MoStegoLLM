@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from mostegollm.compat import (
     TestVector,
     current_env,
     lib_version,
+    make_vector,
     model_commit_hash,
     read_vectors,
+    verify_vector,
     write_vectors,
 )
 
@@ -61,3 +65,22 @@ def test_model_commit_hash_handles_missing(codec):
     model, _tok, _dev = codec._ensure_model()
     result = model_commit_hash(model)
     assert result is None or isinstance(result, str)
+
+
+@pytest.mark.parametrize(
+    "payload", [b"hello", b"\x42", b"\x00\x01\x02\x03\xfe\xff", b"The quick brown fox."]
+)
+def test_make_then_verify_round_trips(codec, payload):
+    model, tok, dev = codec._ensure_model()
+    vector = make_vector(
+        payload,
+        model=model,
+        tokenizer=tok,
+        device=dev,
+        prompt="According to experts,",
+        model_name=codec._model_name,
+    )
+    assert tok.encode(vector.cover_text, add_special_tokens=False) == vector.generated_token_ids
+    result = verify_vector(vector, model=model, tokenizer=tok, device=dev)
+    assert result.ok, result.detail
+    assert result.failure_class is None

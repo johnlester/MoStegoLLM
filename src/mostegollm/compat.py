@@ -8,14 +8,24 @@ docs/superpowers/specs/2026-06-03-cloud-cross-compatibility-testing-design.md
 
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 from dataclasses import asdict, dataclass
+from enum import Enum
 from os import PathLike
 
 import torch
 
+from .crypto import decrypt as _decrypt
+from .crypto import encrypt as _encrypt
+from .decoder import decode as _decode
+from .encoder import encode as _encode
+from .utils import StegoCryptoError, StegoDecodeError
+
 SCHEMA = "mostegollm-testvector/1"
+
+_DEFAULT_SETTINGS = {"top_k": 256, "temperature": 1.0, "sentence_boundary": False}
 
 
 @dataclass(frozen=True)
@@ -115,3 +125,144 @@ def lib_version() -> str:
 def model_commit_hash(model: object) -> str | None:
     """Return the model's resolved HF commit hash, or ``None`` if not recorded."""
     return getattr(getattr(model, "config", None), "_commit_hash", None)
+
+
+class FailureClass(str, Enum):
+    """Classification of why a :class:`TestVector` failed to verify elsewhere."""
+
+    RETOK_DRIFT = "retokenization_drift"
+    LOGIT_DIVERGENCE = "logit_divergence"
+    LOAD_ERROR = "load_error"
+
+
+@dataclass(frozen=True)
+class VerifyResult:
+    """Outcome of verifying a :class:`TestVector` against the local environment.
+
+    Attributes:
+        ok: ``True`` iff the payload was recovered and its hash matched.
+        failure_class: The category of failure, or ``None`` on success.
+        detail: Human-readable explanation of the outcome.
+        decoder_env: Environment metadata captured on the verifying machine.
+    """
+
+    ok: bool
+    failure_class: FailureClass | None
+    detail: str
+    decoder_env: dict
+
+
+def make_vector(
+    payload: bytes,
+    *,
+    model: object,
+    tokenizer: object,
+    device: object,
+    prompt: str,
+    model_name: str,
+    model_revision: str | None = None,
+    settings: dict | None = None,
+    password: str | None = None,
+) -> TestVector:
+    """Encode *payload* and package the result as a portable :class:`TestVector`.
+
+    Args:
+        payload: The plaintext bytes to hide.
+        model: Loaded language model.
+        tokenizer: Matching tokenizer.
+        device: Torch device the model lives on.
+        prompt: Prompt to prepend before generation.
+        model_name: Hugging Face model id to record in the vector.
+        model_revision: Explicit model commit hash; falls back to
+            :func:`model_commit_hash` when ``None``.
+        settings: Optional overrides merged over ``_DEFAULT_SETTINGS``.
+        password: Optional password; when set, the payload is AES-256-GCM encrypted
+            before encoding (but ``payload_sha256``/``payload_hex`` record the plaintext).
+
+    Returns:
+        A fully populated :class:`TestVector`.
+    """
+    s = {**_DEFAULT_SETTINGS, **(settings or {})}
+    to_encode = _encrypt(payload, password) if password else payload
+    cover, ids, _bits = _encode(
+        to_encode,
+        model=model,
+        tokenizer=tokenizer,
+        device=device,
+        prompt=prompt,
+        top_k=s["top_k"],
+        temperature=s["temperature"],
+        sentence_boundary=s["sentence_boundary"],
+    )
+    return TestVector(
+        schema=SCHEMA,
+        library_version=lib_version(),
+        model=model_name,
+        model_revision=model_revision if model_revision is not None else model_commit_hash(model),
+        prompt=prompt,
+        settings={**s, "password": password},
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+        payload_hex=payload.hex(),
+        cover_text=cover,
+        generated_token_ids=list(ids),
+        source_env=current_env(device),
+    )
+
+
+def verify_vector(
+    vector: TestVector, *, model: object, tokenizer: object, device: object
+) -> VerifyResult:
+    """Re-decode *vector* locally and classify any divergence from the producer.
+
+    The check has two stages. First, the cover text is re-tokenized; a mismatch
+    against ``generated_token_ids`` is a deterministic tokenizer disagreement
+    (:attr:`FailureClass.RETOK_DRIFT`). Otherwise the payload is decoded (and
+    decrypted if a password is recorded); any decode/crypto failure or a payload
+    hash mismatch is attributed to logit divergence between environments.
+
+    Args:
+        vector: The vector to verify.
+        model: Loaded language model on the verifying machine.
+        tokenizer: Matching tokenizer.
+        device: Torch device the model lives on.
+
+    Returns:
+        A :class:`VerifyResult` describing success or the failure category.
+    """
+    env = current_env(device)
+    retok = tokenizer.encode(vector.cover_text, add_special_tokens=False)
+    if retok != vector.generated_token_ids:
+        return VerifyResult(
+            False,
+            FailureClass.RETOK_DRIFT,
+            f"re-tokenization mismatch: {len(retok)} vs {len(vector.generated_token_ids)} tokens",
+            env,
+        )
+    password = vector.settings.get("password")
+    try:
+        decoded = _decode(
+            vector.cover_text,
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            prompt=vector.prompt,
+            top_k=vector.settings.get("top_k", 256),
+            temperature=vector.settings.get("temperature", 1.0),
+        )
+        if password:
+            decoded = _decrypt(decoded, password)
+    except (StegoDecodeError, StegoCryptoError) as exc:
+        return VerifyResult(
+            False,
+            FailureClass.LOGIT_DIVERGENCE,
+            f"decode failed though re-tokenization matched: {exc}",
+            env,
+        )
+    if hashlib.sha256(decoded).hexdigest() != vector.payload_sha256:
+        return VerifyResult(
+            False,
+            FailureClass.LOGIT_DIVERGENCE,
+            "decoded payload hash mismatch (silent desync)",
+            env,
+        )
+    return VerifyResult(True, None, "ok", env)
