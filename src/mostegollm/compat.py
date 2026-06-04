@@ -39,7 +39,7 @@ class TestVector:
         model_revision: Resolved model commit hash, or ``None`` if unknown.
         prompt: Prompt prepended before generation.
         settings: Coding settings (``top_k``, ``temperature``, ``sentence_boundary``,
-            ``password``).
+            ``encrypted``). The password is never stored.
         payload_sha256: Hex SHA-256 of the *plaintext* payload (pre-encryption).
         payload_hex: Hex encoding of the plaintext payload.
         cover_text: Generated cover text carrying the payload.
@@ -200,7 +200,9 @@ def make_vector(
         model=model_name,
         model_revision=model_revision if model_revision is not None else model_commit_hash(model),
         prompt=prompt,
-        settings={**s, "password": password},
+        # SECURITY: never persist the password in a portable/committed artifact.
+        # Record only a non-secret marker; the verifier supplies it out-of-band.
+        settings={**s, "encrypted": bool(password)},
         payload_sha256=hashlib.sha256(payload).hexdigest(),
         payload_hex=payload.hex(),
         cover_text=cover,
@@ -210,24 +212,36 @@ def make_vector(
 
 
 def verify_vector(
-    vector: TestVector, *, model: object, tokenizer: object, device: object
+    vector: TestVector,
+    *,
+    model: object,
+    tokenizer: object,
+    device: object,
+    password: str | None = None,
 ) -> VerifyResult:
     """Re-decode *vector* locally and classify any divergence from the producer.
 
     The check has two stages. First, the cover text is re-tokenized; a mismatch
     against ``generated_token_ids`` is a deterministic tokenizer disagreement
     (:attr:`FailureClass.RETOK_DRIFT`). Otherwise the payload is decoded (and
-    decrypted if a password is recorded); any decode/crypto failure or a payload
+    decrypted if the vector is encrypted); any decode/crypto failure or a payload
     hash mismatch is attributed to logit divergence between environments.
+
+    For encrypted vectors (``settings["encrypted"]`` is True) the caller must
+    supply *password* out-of-band — it is deliberately not stored in the vector.
 
     Args:
         vector: The vector to verify.
         model: Loaded language model on the verifying machine.
         tokenizer: Matching tokenizer.
         device: Torch device the model lives on.
+        password: Decryption password for encrypted vectors, supplied out-of-band.
 
     Returns:
         A :class:`VerifyResult` describing success or the failure category.
+
+    Raises:
+        ValueError: If the vector is encrypted but no *password* is supplied.
     """
     env = current_env(device)
     retok = tokenizer.encode(vector.cover_text, add_special_tokens=False)
@@ -238,7 +252,9 @@ def verify_vector(
             f"re-tokenization mismatch: {len(retok)} vs {len(vector.generated_token_ids)} tokens",
             env,
         )
-    password = vector.settings.get("password")
+    encrypted = vector.settings.get("encrypted", False)
+    if encrypted and password is None:
+        raise ValueError("vector is encrypted; supply password= to verify_vector")
     try:
         decoded = _decode(
             vector.cover_text,
@@ -249,7 +265,7 @@ def verify_vector(
             top_k=vector.settings.get("top_k", 256),
             temperature=vector.settings.get("temperature", 1.0),
         )
-        if password:
+        if encrypted:
             decoded = _decrypt(decoded, password)
     except (StegoDecodeError, StegoCryptoError) as exc:
         return VerifyResult(

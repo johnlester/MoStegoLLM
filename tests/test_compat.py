@@ -28,7 +28,7 @@ def _sample_vector() -> TestVector:
         model="HuggingFaceTB/SmolLM-135M",
         model_revision="abc123",
         prompt="According to experts,",
-        settings={"top_k": 256, "temperature": 1.0, "sentence_boundary": False, "password": None},
+        settings={"top_k": 256, "temperature": 1.0, "sentence_boundary": False, "encrypted": False},
         payload_sha256="00" * 32,
         payload_hex="68656c6c6f",
         cover_text="Some cover text with unicode café 🙂.",
@@ -132,9 +132,26 @@ def test_encrypted_vector_round_trips(codec):
         model_name=codec._model_name,
         password="pw-123",
     )
-    assert vector.settings["password"] == "pw-123"
+    # SECURITY: the password is NOT persisted; only a non-secret marker is.
+    assert vector.settings["encrypted"] is True
+    assert "password" not in vector.settings
     import hashlib as _h
 
     assert vector.payload_sha256 == _h.sha256(b"secret payload").hexdigest()
-    result = verify_vector(vector, model=model, tokenizer=tok, device=dev)
+    result = verify_vector(vector, model=model, tokenizer=tok, device=dev, password="pw-123")
     assert result.ok, result.detail
+
+
+def test_verify_encrypted_without_password_raises(codec):
+    model, tok, dev = codec._ensure_model()
+    vector = make_vector(
+        b"secret payload",
+        model=model,
+        tokenizer=tok,
+        device=dev,
+        prompt="According to experts,",
+        model_name=codec._model_name,
+        password="pw-123",
+    )
+    with pytest.raises(ValueError, match="encrypted"):
+        verify_vector(vector, model=model, tokenizer=tok, device=dev)
