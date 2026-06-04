@@ -119,3 +119,22 @@ def test_verify_detects_payload_mismatch(codec):
     result = verify_vector(bad, model=model, tokenizer=tok, device=dev)
     assert not result.ok
     assert result.failure_class == FailureClass.LOGIT_DIVERGENCE
+
+
+def test_encrypted_vector_round_trips(codec):
+    model, tok, dev = codec._ensure_model()
+    vector = make_vector(
+        b"secret payload",
+        model=model,
+        tokenizer=tok,
+        device=dev,
+        prompt="According to experts,",
+        model_name=codec._model_name,
+        password="pw-123",
+    )
+    assert vector.settings["password"] == "pw-123"
+    import hashlib as _h
+
+    assert vector.payload_sha256 == _h.sha256(b"secret payload").hexdigest()
+    result = verify_vector(vector, model=model, tokenizer=tok, device=dev)
+    assert result.ok, result.detail
