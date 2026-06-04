@@ -155,3 +155,18 @@ def test_verify_encrypted_without_password_raises(codec):
     )
     with pytest.raises(ValueError, match="encrypted"):
         verify_vector(vector, model=model, tokenizer=tok, device=dev)
+
+
+def test_verify_rejects_unknown_schema(codec):
+    model, tok, dev = codec._ensure_model()
+    good = make_vector(
+        b"hello",
+        model=model,
+        tokenizer=tok,
+        device=dev,
+        prompt="According to experts,",
+        model_name=codec._model_name,
+    )
+    bad = dataclasses.replace(good, schema="mostegollm-testvector/999")
+    with pytest.raises(ValueError, match="schema"):
+        verify_vector(bad, model=model, tokenizer=tok, device=dev)

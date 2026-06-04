@@ -241,9 +241,12 @@ def verify_vector(
         A :class:`VerifyResult` describing success or the failure category.
 
     Raises:
-        ValueError: If the vector is encrypted but no *password* is supplied.
+        ValueError: If the vector's schema is unrecognized, or if it is
+            encrypted but no *password* is supplied.
     """
     env = current_env(device)
+    if vector.schema != SCHEMA:
+        raise ValueError(f"unsupported test-vector schema {vector.schema!r} (expected {SCHEMA!r})")
     retok = tokenizer.encode(vector.cover_text, add_special_tokens=False)
     if retok != vector.generated_token_ids:
         return VerifyResult(
@@ -262,8 +265,12 @@ def verify_vector(
             tokenizer=tokenizer,
             device=device,
             prompt=vector.prompt,
-            top_k=vector.settings.get("top_k", 256),
-            temperature=vector.settings.get("temperature", 1.0),
+            # Reuse the ids we just validated equal generated_token_ids, so decode
+            # uses the encoder's canonical token stream instead of tokenizing a
+            # third time (decoder.decode exposes token_ids for exactly this).
+            token_ids=vector.generated_token_ids,
+            top_k=vector.settings.get("top_k", _DEFAULT_SETTINGS["top_k"]),
+            temperature=vector.settings.get("temperature", _DEFAULT_SETTINGS["temperature"]),
         )
         if encrypted:
             decoded = _decrypt(decoded, password)
