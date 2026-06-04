@@ -194,6 +194,16 @@ the **same model weights**. Any rare residual divergence is caught by the
 CRC-32 integrity check, so a mismatch fails loudly rather than returning corrupt
 data.
 
+### Verified portability (foundation)
+
+Cover text is portable across PyTorch versions, devices, and dtypes by design
+(integer rank-interval coding). A committed corpus of reference test vectors
+(`compat/golden_vectors.jsonl`) is decoded on every test run as a regression
+guard (`tests/test_golden_vectors.py`); regenerate it with
+`python -m compat.generate_golden`. Broad multi-environment proof (NVIDIA archs,
+AMD ROCm, dtype matrix) runs in a separate cloud layer. **Apple Silicon / MPS is
+not covered by the automated matrix** — verify manually on a Mac if needed.
+
 **Integrity:** Each encoded message includes a CRC-32 checksum in the header for basic
 integrity validation. This is not a cryptographic MAC and does not protect against
 deliberate tampering.
