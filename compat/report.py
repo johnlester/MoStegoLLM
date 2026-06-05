@@ -31,9 +31,7 @@ def build_matrix(results: list[dict], cell_ids: list[str]) -> dict[tuple[str, st
     return grid
 
 
-def ordering_agreement(
-    dumps: list[dict], reference_cell: str
-) -> dict[str, tuple[int, int]]:
+def ordering_agreement(dumps: list[dict], reference_cell: str) -> dict[str, tuple[int, int]]:
     """Per-step top-k ordering agreement of each cell vs the reference cell.
 
     Args:

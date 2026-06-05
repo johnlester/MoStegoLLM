@@ -90,9 +90,7 @@ def execute(task: str, cell: dict, payload=None):
                     "prompt": vector.prompt,
                     "payload_hex": vector.payload_hex,
                     "ok": result.ok,
-                    "failure_class": (
-                        result.failure_class.value if result.failure_class else None
-                    ),
+                    "failure_class": (result.failure_class.value if result.failure_class else None),
                     "detail": result.detail,
                 }
             )
