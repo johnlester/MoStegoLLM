@@ -172,6 +172,32 @@ def test_verify_rejects_unknown_schema(codec):
         verify_vector(bad, model=model, tokenizer=tok, device=dev)
 
 
+def test_dump_step_logits_matches_sequence(codec):
+    from mostegollm.compat import dump_step_logits
+
+    model, tok, dev = codec._ensure_model()
+    vector = make_vector(
+        b"hello world",
+        model=model,
+        tokenizer=tok,
+        device=dev,
+        prompt="According to experts,",
+        model_name=codec._model_name,
+    )
+    steps = dump_step_logits(
+        "According to experts,", vector.generated_token_ids, model=model, tokenizer=tok, device=dev
+    )
+    # One record per replayed token.
+    assert len(steps) == len(vector.generated_token_ids)
+    for i, step in enumerate(steps):
+        ids, logits = step["top_ids"], step["top_logits"]
+        assert len(ids) == len(logits) and ids  # paired and non-empty
+        # top-k is logit-descending.
+        assert logits == sorted(logits, reverse=True)
+        # The token actually generated at this step survives the filter and is present.
+        assert vector.generated_token_ids[i] in ids
+
+
 def test_canonical_payloads_are_deterministic():
     import importlib.util
     from pathlib import Path

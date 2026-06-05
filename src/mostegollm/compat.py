@@ -20,7 +20,13 @@ import torch
 from .crypto import decrypt as _decrypt
 from .crypto import encrypt as _encrypt
 from .decoder import decode as _decode
-from .encoder import encode as _encode
+from .encoder import (
+    TOP_K,
+    _filter_tokens,
+    _get_topk_logits,
+    encode as _encode,
+    get_non_roundtrip_tokens,
+)
 from .utils import StegoCryptoError, StegoDecodeError
 
 SCHEMA = "mostegollm-testvector/1"
@@ -289,3 +295,60 @@ def verify_vector(
             env,
         )
     return VerifyResult(True, None, "ok", env)
+
+
+def dump_step_logits(
+    prompt: str,
+    token_ids: list[int],
+    *,
+    model: object,
+    tokenizer: object,
+    device: object,
+    top_k: int = TOP_K,
+    temperature: float = 1.0,
+) -> list[dict]:
+    """Replay *token_ids* and record the filtered top-k distribution at each step.
+
+    This is the white-box input for cross-environment comparison: two machines
+    that produce the same per-step filtered top-k *ordering* build identical
+    rank intervals and therefore decode identically. Mirrors the decoder's
+    per-step loop exactly (same prompt handling, top-k, and BPE filter), but
+    records ``(top_ids, top_logits)`` instead of decoding bits.
+
+    Args:
+        prompt: The seed prompt (must match how the sequence was produced).
+        token_ids: The token sequence to replay (e.g. a vector's
+            ``generated_token_ids``).
+        model: Loaded language model.
+        tokenizer: Matching tokenizer.
+        device: Torch device.
+        top_k: Top-k width (must match encoding).
+        temperature: Logit scaling (must match encoding).
+
+    Returns:
+        One dict per step with ``top_ids`` (list[int], logit-descending) and
+        ``top_logits`` (list[float]), already BPE-filtered.
+    """
+    prompt_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
+    if prompt_ids.numel() == 0:
+        bos = tokenizer.bos_token_id or 0
+        prompt_ids = torch.tensor([[bos]], device=device)
+    next_input = prompt_ids.clone()
+    past_kv = None
+
+    non_rt_tokens = get_non_roundtrip_tokens(tokenizer)
+    merge_cache: dict[tuple[int, int], bool] = {}
+    prev_token_id: int | None = None
+
+    steps: list[dict] = []
+    for token_id in token_ids:
+        tok_ids, logits, past_kv = _get_topk_logits(
+            model, next_input, device, top_k=top_k, temperature=temperature, past_key_values=past_kv
+        )
+        tok_ids, logits = _filter_tokens(
+            tokenizer, prev_token_id, tok_ids, logits, non_rt_tokens, merge_cache
+        )
+        steps.append({"top_ids": list(tok_ids), "top_logits": [float(x) for x in logits]})
+        next_input = torch.tensor([[token_id]], device=device)
+        prev_token_id = token_id
+    return steps
