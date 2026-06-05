@@ -7,6 +7,7 @@ which token to emit at each step.
 
 from __future__ import annotations
 
+import warnings
 import zlib
 
 import torch
@@ -19,6 +20,27 @@ from .utils import (
     bytes_to_bits,
     pack_header,
 )
+
+
+def warn_if_non_canonical_dtype(model: PreTrainedModel) -> None:
+    """Warn if *model* is not float32, the only dtype portable across platforms.
+
+    Encode and decode must reproduce identical probability distributions. fp16/bf16
+    quantization (~1e-3) is the same order as the coder's GUARD merge threshold and
+    flips token ordering across devices, so a non-float32 model only round-trips
+    when BOTH sides use the *identical* dtype — and never across CPU/GPU. Empirically
+    confirmed by the cross-compatibility matrix (cpu-fp32 <-> t4-fp32 = 100%;
+    fp16 <-> fp32 = 0%). float32 is the supported, portable default. Warns rather
+    than raises, since a deliberately-matched non-float32 setup can still work.
+    """
+    dtype = getattr(model, "dtype", None)
+    if dtype is not None and dtype != torch.float32:
+        warnings.warn(
+            f"Model dtype is {dtype}, not float32. Reproducible decoding requires the "
+            "decoder to use the identical dtype, and only float32 is portable across "
+            "devices/PyTorch versions. See the reproducibility contract in the README.",
+            stacklevel=3,
+        )
 
 # Cache of non-round-tripping token sets, keyed by tokenizer identity.
 _NON_RT_CACHE: dict[int, frozenset[int]] = {}
@@ -160,6 +182,8 @@ def encode(
     Raises:
         StegoEncodeError: If encoding fails.
     """
+    warn_if_non_canonical_dtype(model)
+
     # Prepend header to payload
     payload_crc = zlib.crc32(data) & 0xFFFFFFFF
     header = pack_header(len(data), crc32=payload_crc)

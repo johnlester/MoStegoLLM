@@ -18,8 +18,10 @@ from .encoder import (
     _filter_tokens,
     _get_topk_logits,
     get_non_roundtrip_tokens,
+    warn_if_non_canonical_dtype,
 )
 from .utils import (
+    CONFIG_MISMATCH_HINT,
     HEADER_BITS,
     StegoDecodeError,
     bits_to_bytes,
@@ -60,6 +62,8 @@ def decode(
     Raises:
         StegoDecodeError: If decoding fails (bad header, token mismatch, etc.).
     """
+    warn_if_non_canonical_dtype(model)
+
     # Resolve token IDs for the cover text
     if token_ids is None:
         cover_token_ids = tokenizer.encode(cover_text, add_special_tokens=False)
@@ -193,9 +197,6 @@ def decode(
     # Verify CRC-32 integrity
     actual_crc = zlib.crc32(payload) & 0xFFFFFFFF
     if actual_crc != expected_crc:
-        raise StegoDecodeError(
-            "Payload integrity check failed -- data may be corrupted, "
-            "the wrong model was used, or the cover text was modified."
-        )
+        raise StegoDecodeError("Payload integrity check failed. " + CONFIG_MISMATCH_HINT)
 
     return payload

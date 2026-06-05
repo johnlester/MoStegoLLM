@@ -217,6 +217,26 @@ regenerate with `python -m compat.generate_golden`. The cloud matrix runs via
 `modal run -m compat.modal_app`. **Apple Silicon / MPS and AMD ROCm are not yet
 in the automated matrix.**
 
+### Reproducibility contract (what a receiver must match)
+
+Decoding replays the encoder's probability distributions step by step, so the
+decoder must reproduce them **bit-identically**. The cover text is *not*
+self-describing: its hidden header carries only magic + length + CRC-32 — **no
+model id, dtype, or coding settings**. Those parameters are a shared "key" both
+sides agree on out of band (the library's defaults make the common case
+automatic):
+
+| Parameter | How the receiver obtains it |
+|---|---|
+| **Model** (name + weights) | Out-of-band shared knowledge — effectively the key. Defaults to `HuggingFaceTB/SmolLM-135M`, so two parties on defaults match automatically. |
+| **Model dtype** | Pinned to **float32** by `load_model` and portable across CPU/GPU/PyTorch versions. fp16/bf16 only round-trip if *both* sides use the identical dtype (and never across CPU↔GPU) — `encode`/`decode` warn on a non-float32 model. |
+| **Prompt** | In default seed-phrase mode, a prefix-free seed is prepended to the cover text and recovered automatically. With a custom `prompt=`, it must be shared out of band. |
+| **top_k, temperature** | Out of band, but fixed defaults (256, 1.0) match automatically. |
+
+If any of these differ (or the cover text is altered), decoding **fails closed**
+— `StegoDecodeError` (bad magic or CRC), never silently-wrong bytes. The error
+message names this parameter set as the likely cause.
+
 **Integrity:** Each encoded message includes a CRC-32 checksum in the header for basic
 integrity validation. This is not a cryptographic MAC and does not protect against
 deliberate tampering.

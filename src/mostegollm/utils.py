@@ -62,6 +62,18 @@ def pack_header(payload_length: int, crc32: int = 0) -> bytes:
     return struct.pack(HEADER_FORMAT, MAGIC, payload_length, crc32 & 0xFFFFFFFF)
 
 
+# Recovery requires the decoder to reproduce the encoder's exact probability
+# distributions. None of these parameters are carried in the cover text — they are
+# a shared "key" both sides must agree on (the library's defaults make the common
+# case automatic). float32 is the only dtype portable across devices/PyTorch
+# versions; fp16/bf16 work only if BOTH sides use the identical dtype.
+CONFIG_MISMATCH_HINT = (
+    "Decoding requires the SAME model, model dtype (float32 recommended — the "
+    "portable default), prompt, top_k, and temperature that were used to encode. "
+    "A mismatch in any of these — or a corrupted/modified cover text — causes this."
+)
+
+
 def unpack_header(header_bytes: bytes) -> tuple[int, int]:
     """Unpack a header and return the payload length and CRC-32.
 
@@ -82,8 +94,7 @@ def unpack_header(header_bytes: bytes) -> tuple[int, int]:
     if magic != MAGIC:
         raise StegoDecodeError(
             f"Invalid magic bytes: expected {MAGIC!r}, got {magic!r}. "
-            "The text may not have been encoded with MoStegoLLM, "
-            "or a different prompt was used."
+            "The text may not have been encoded with MoStegoLLM. " + CONFIG_MISMATCH_HINT
         )
     return length, crc
 
