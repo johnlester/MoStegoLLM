@@ -42,6 +42,7 @@ def warn_if_non_canonical_dtype(model: PreTrainedModel) -> None:
             stacklevel=3,
         )
 
+
 # Cache of non-round-tripping token sets, keyed by tokenizer identity.
 _NON_RT_CACHE: dict[int, frozenset[int]] = {}
 
