@@ -205,3 +205,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Regenerable raw matrix data (keep the .md report)
+compat/results/*.json

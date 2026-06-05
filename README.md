@@ -194,15 +194,28 @@ the **same model weights**. Any rare residual divergence is caught by the
 CRC-32 integrity check, so a mismatch fails loudly rather than returning corrupt
 data.
 
-### Verified portability (foundation)
+### Verified portability
 
-Cover text is portable across PyTorch versions, devices, and dtypes by design
-(integer rank-interval coding). A committed corpus of reference test vectors
-(`compat/golden_vectors.jsonl`) is decoded on every test run as a regression
-guard (`tests/test_golden_vectors.py`); regenerate it with
-`python -m compat.generate_golden`. Broad multi-environment proof (NVIDIA archs,
-AMD ROCm, dtype matrix) runs in a separate cloud layer. **Apple Silicon / MPS is
-not covered by the automated matrix** — verify manually on a Mac if needed.
+Integer rank-interval coding makes cover text portable **across devices and
+PyTorch versions at a fixed model dtype** — but **not across dtypes**. A live
+Modal matrix (`compat/`, see `compat/results/smoke-matrix.md`) measured this:
+
+| | cpu-fp32 | t4-fp32 | t4-fp16 |
+|---|---|---|---|
+| **cpu-fp32** | ✓ | ✓ | ✗ |
+| **t4-fp32** | ✓ | ✓ | ✗ |
+| **t4-fp16** | ✗ | ✗ | ✓ |
+
+CPU↔GPU at fp32 round-trips perfectly (100% top-k ordering agreement); fp16 ↔
+fp32 fails (0% agreement) because fp16's ~1e-3 quantization error is the same
+order as the `GUARD=1e-3` merge threshold, flipping token ordering. **Encode and
+decode must use the same model dtype.**
+
+A committed corpus of reference test vectors (`compat/golden_vectors.jsonl`) is
+decoded on every test run as a regression guard (`tests/test_golden_vectors.py`);
+regenerate with `python -m compat.generate_golden`. The cloud matrix runs via
+`modal run -m compat.modal_app`. **Apple Silicon / MPS and AMD ROCm are not yet
+in the automated matrix.**
 
 **Integrity:** Each encoded message includes a CRC-32 checksum in the header for basic
 integrity validation. This is not a cryptographic MAC and does not protect against
