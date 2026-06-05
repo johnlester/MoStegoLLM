@@ -47,7 +47,8 @@ packages = ["src/mostegollm"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "." lets tests import the top-level `compat` orchestration package (cells, report).
+pythonpath = ["src", "."]
 markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]
 
 [tool.uv.sources]
