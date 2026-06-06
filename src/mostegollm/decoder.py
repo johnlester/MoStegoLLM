@@ -16,6 +16,7 @@ from .coding import HALF, QUARTER, WHOLE, step_coding
 from .encoder import (
     TOP_K,
     _filter_tokens,
+    _get_merge_cache,
     _get_topk_logits,
     get_non_roundtrip_tokens,
     warn_if_non_canonical_dtype,
@@ -85,7 +86,7 @@ def decode(
 
     # Pre-compute BPE filter state (must match the encoder exactly).
     non_rt_tokens = get_non_roundtrip_tokens(tokenizer)
-    merge_cache: dict[tuple[int, int], bool] = {}
+    merge_cache = _get_merge_cache(tokenizer)
     prev_token_id: int | None = None
 
     # --- Arithmetic coding state (encoder/compressor side) ---

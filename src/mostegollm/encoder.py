@@ -75,6 +75,23 @@ def get_non_roundtrip_tokens(tokenizer: PreTrainedTokenizerBase) -> frozenset[in
     return _NON_RT_CACHE[key]
 
 
+# Persistent per-tokenizer (prev, candidate) -> "would BPE-merge?" cache. Keyed by
+# id(tokenizer) like _NON_RT_CACHE; the content is deterministic string-op output,
+# so persisting it across encode/decode calls only saves work, never changes a
+# keep decision.
+_MERGE_CACHE: dict[int, dict[tuple[int, int], bool]] = {}
+
+
+def _get_merge_cache(tokenizer: PreTrainedTokenizerBase) -> dict[tuple[int, int], bool]:
+    """Return the process-persistent merge cache for *tokenizer*."""
+    key = id(tokenizer)
+    cache = _MERGE_CACHE.get(key)
+    if cache is None:
+        cache = {}
+        _MERGE_CACHE[key] = cache
+    return cache
+
+
 def _filter_tokens(
     tokenizer: PreTrainedTokenizerBase,
     prev_token_id: int | None,
@@ -89,20 +106,30 @@ def _filter_tokens(
     would BPE-merge with *prev_token_id*. These checks are pure string ops, so
     they are identical across platforms. Falls back to the unfiltered lists if
     everything would be removed.
+
+    The (prev, candidate) merge checks are **batched**: all not-yet-cached pairs
+    for this step are resolved with a single ``batch_decode`` + one batch encode,
+    instead of a decode/encode round-trip per candidate. This is byte-identical to
+    the per-token version (same strings, same ids) but far fewer Python<->Rust
+    crossings. See tests/test_filter_equiv.py.
     """
+    # (1) Drop tokens that don't round-trip individually, preserving order.
+    candidates = [(tid, lg) for tid, lg in zip(token_ids, logits) if tid not in non_rt_tokens]
+
+    # (2) Resolve any uncached (prev, candidate) merge decisions in one batch.
+    if prev_token_id is not None:
+        uncached = [tid for tid, _ in candidates if (prev_token_id, tid) not in merge_cache]
+        if uncached:
+            texts = tokenizer.batch_decode([[prev_token_id, tid] for tid in uncached])
+            re_encs = tokenizer(texts, add_special_tokens=False)["input_ids"]
+            for tid, re_enc in zip(uncached, re_encs):
+                merge_cache[(prev_token_id, tid)] = re_enc != [prev_token_id, tid]
+
     keep_ids: list[int] = []
     keep_logits: list[float] = []
-    for tid, lg in zip(token_ids, logits):
-        if tid in non_rt_tokens:
+    for tid, lg in candidates:
+        if prev_token_id is not None and merge_cache[(prev_token_id, tid)]:
             continue
-        if prev_token_id is not None:
-            pair = (prev_token_id, tid)
-            if pair not in merge_cache:
-                text = tokenizer.decode([prev_token_id, tid])
-                re_enc = tokenizer.encode(text, add_special_tokens=False)
-                merge_cache[pair] = re_enc != [prev_token_id, tid]
-            if merge_cache[pair]:
-                continue
         keep_ids.append(tid)
         keep_logits.append(lg)
     if not keep_ids:
@@ -229,7 +256,7 @@ def encode(
 
     # Pre-compute tokens that never round-trip and a cache for merge checks.
     non_rt_tokens = get_non_roundtrip_tokens(tokenizer)
-    merge_cache: dict[tuple[int, int], bool] = {}
+    merge_cache = _get_merge_cache(tokenizer)
     prev_token_id: int | None = None
 
     # --- Arithmetic coding state (decoder side) ---
