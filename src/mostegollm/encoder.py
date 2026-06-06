@@ -56,22 +56,41 @@ MAX_EXTRA_TOKENS = 100
 TOP_K = K
 
 
+# Batch size for the vocab round-trip scan: bounds peak memory while still
+# collapsing ~vocab_size Python<->Rust calls into vocab_size/CHUNK batches.
+_NON_RT_SCAN_CHUNK = 4096
+
+
+def _scan_non_roundtrip(tokenizer: PreTrainedTokenizerBase, ids: list[int]) -> set[int]:
+    """Return which of *ids* don't survive a single-token decode->encode round-trip.
+
+    Batched (chunked ``batch_decode`` + batch encode) but byte-identical to the
+    per-token check ``encode(decode([tid])) != [tid]``. See tests/test_filter_equiv.py.
+    """
+    bad: set[int] = set()
+    ids = list(ids)
+    for i in range(0, len(ids), _NON_RT_SCAN_CHUNK):
+        chunk = ids[i : i + _NON_RT_SCAN_CHUNK]
+        texts = tokenizer.batch_decode([[tid] for tid in chunk])
+        re_encs = tokenizer(texts, add_special_tokens=False)["input_ids"]
+        for tid, re_enc in zip(chunk, re_encs):
+            if re_enc != [tid]:
+                bad.add(tid)
+    return bad
+
+
 def get_non_roundtrip_tokens(tokenizer: PreTrainedTokenizerBase) -> frozenset[int]:
     """Return the set of token IDs that don't survive a decode→encode round-trip.
 
     These are typically byte-fallback tokens that decode to the Unicode
     replacement character and re-encode to a different token ID.  Cached
-    per tokenizer instance.
+    per tokenizer instance; the (batched) full-vocab scan runs once per process.
     """
     key = id(tokenizer)
     if key not in _NON_RT_CACHE:
-        bad: set[int] = set()
-        for tid in range(tokenizer.vocab_size):
-            text = tokenizer.decode([tid])
-            re_encoded = tokenizer.encode(text, add_special_tokens=False)
-            if re_encoded != [tid]:
-                bad.add(tid)
-        _NON_RT_CACHE[key] = frozenset(bad)
+        _NON_RT_CACHE[key] = frozenset(
+            _scan_non_roundtrip(tokenizer, list(range(tokenizer.vocab_size)))
+        )
     return _NON_RT_CACHE[key]
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 from mostegollm.encoder import (
     _filter_tokens,
     _get_merge_cache,
+    _scan_non_roundtrip,
     get_non_roundtrip_tokens,
 )
 
@@ -52,3 +53,11 @@ def test_merge_cache_persists_per_tokenizer(codec):
     c1 = _get_merge_cache(tok)
     c2 = _get_merge_cache(tok)
     assert c1 is c2  # same persistent dict for the same tokenizer
+
+
+def test_batched_non_roundtrip_scan_matches_naive(codec):
+    _, tok, _ = codec._ensure_model()
+    ids = list(range(0, 9000))  # spans multiple scan chunks (chunk=4096)
+    batched = _scan_non_roundtrip(tok, ids)
+    naive = {tid for tid in ids if tok.encode(tok.decode([tid]), add_special_tokens=False) != [tid]}
+    assert batched == naive
