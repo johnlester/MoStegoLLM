@@ -80,16 +80,30 @@ def _scan_non_roundtrip(tokenizer: PreTrainedTokenizerBase, ids: list[int]) -> s
 
 
 def get_non_roundtrip_tokens(tokenizer: PreTrainedTokenizerBase) -> frozenset[int]:
-    """Return the set of token IDs that don't survive a decode→encode round-trip.
+    """Return the set of token IDs that must not be selected as cover-text tokens.
 
-    These are typically byte-fallback tokens that decode to the Unicode
-    replacement character and re-encode to a different token ID.  Cached
-    per tokenizer instance; the (batched) full-vocab scan runs once per process.
+    Two classes are excluded:
+
+    1. Tokens that don't survive a single-token decode→encode round-trip
+       (typically byte-fallback tokens that decode to the Unicode replacement
+       character and re-encode to a different ID).
+    2. **Special tokens** (BOS/EOS/PAD/UNK and any ``additional_special_tokens``).
+       These pass the per-token and pairwise round-trip checks, but emitting one
+       as content makes the *full* cover-text string re-tokenize differently:
+       the tokenizer inserts/removes a word-boundary marker around the special
+       token, shifting every subsequent token and eventually selecting a token
+       outside the reproducible top-k — breaking decode. The local filter cannot
+       see this whole-string normalization, so they are excluded explicitly.
+
+    Cached per tokenizer instance; the (batched) full-vocab scan runs once per
+    process. Encoder and decoder both source their exclusion set here, so the
+    set stays identical on both sides.
     """
     key = id(tokenizer)
     if key not in _NON_RT_CACHE:
+        special_ids = {sid for sid in tokenizer.all_special_ids if sid is not None}
         _NON_RT_CACHE[key] = frozenset(
-            _scan_non_roundtrip(tokenizer, list(range(tokenizer.vocab_size)))
+            _scan_non_roundtrip(tokenizer, list(range(tokenizer.vocab_size))) | special_ids
         )
     return _NON_RT_CACHE[key]
 
