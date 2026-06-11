@@ -40,6 +40,10 @@ class StegoCodec:
         device: ``'auto'`` (default), ``'cpu'``, ``'cuda'``, etc.
         prompt: Seed text that prefixes every generation.  Encoder and
             decoder **must** use the same prompt.
+        topic: Cover-story topic for the auto opener (Mode A).  When set, the
+            prepended opener is chosen from that topic's phrases so the cover
+            text reads as if it's about that subject.  Mutually exclusive with
+            ``prompt``.  Use :meth:`list_topics` for valid names.
         top_k: Number of most-probable tokens considered at each step.
         temperature: Softmax temperature (``1.0`` = unmodified).
         sentence_boundary: If ``True``, continue generating tokens past the
@@ -73,10 +77,9 @@ class StegoCodec:
                     "topic and prompt are mutually exclusive: a custom prompt is "
                     "its own opener, so a topic would be ignored."
                 )
-            if topic not in list_topics():
-                raise ValueError(
-                    f"Unknown topic {topic!r}. Valid topics: {', '.join(list_topics())}"
-                )
+            valid = list_topics()
+            if topic not in valid:
+                raise ValueError(f"Unknown topic {topic!r}. Valid topics: {', '.join(valid)}")
         self._topic = topic
         self._top_k = top_k
         self._temperature = temperature

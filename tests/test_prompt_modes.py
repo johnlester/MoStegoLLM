@@ -39,6 +39,11 @@ class TestModeA:
         cover = codec.encode(data)
         assert codec.decode(cover) == data
 
+    def test_topic_decode_rejects_unknown_prefix(self, codec_topic: StegoCodec) -> None:
+        """A topic codec rejects text that starts with no known codebook phrase."""
+        with pytest.raises(StegoDecodeError):
+            codec_topic.decode("zzz this does not start with any known opener.")
+
 
 class TestModeC:
     """Custom-prompt mode: prompt is prepended and stripped by known length."""
