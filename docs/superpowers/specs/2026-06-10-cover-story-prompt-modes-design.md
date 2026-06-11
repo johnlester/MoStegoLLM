@@ -97,8 +97,11 @@ ALL_PHRASES: tuple[str, ...] = tuple(p for ps in TOPICS.values() for p in ps)
 API:
 
 - `select_seed(data: bytes, topic: str | None = None) -> str` — pick from
-  `TOPICS[topic]` via `sha256(data)` when `topic` is given, else from
-  `ALL_PHRASES` as before. Unknown `topic` → `ValueError` listing valid topics.
+  `TOPICS[topic]` via `sha256(data)` when `topic` is given. When `topic` is
+  `None` (default), pick from the neutral `general` set (its 256 entries keep a
+  uniform `2**16 / 256` selection and read plausibly for any content; themed
+  multi-sentence openers are opt-in via an explicit topic). Unknown `topic` →
+  `ValueError` listing valid topics.
 - `match_seed(cover_text) -> tuple[str, str]` — unchanged; matches the union, so
   **decode never needs the topic.**
 - `list_topics() -> tuple[str, ...]`.
