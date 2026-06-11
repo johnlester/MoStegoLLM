@@ -22,6 +22,32 @@ QUARTER = WHOLE >> 2
 # Top-k width considered at each step.
 K = 256
 
+# Minimum usable top-k: a single candidate owns all of [0, WHOLE) (zero entropy,
+# encodes no bits). The maximum is K — the fixed CUM schedule has exactly K
+# rank-intervals, so more candidates than that index past its end.
+MIN_TOP_K = 2
+
+
+def validate_top_k(top_k: int, exc: type[Exception] = ValueError) -> None:
+    """Raise *exc* if *top_k* is outside the supported ``[MIN_TOP_K, K]`` range.
+
+    Args:
+        top_k: Requested top-k width.
+        exc: Exception class to raise (e.g. ``StegoEncodeError`` on the encode
+            path, ``StegoDecodeError`` on decode) so callers get a contextual type.
+    """
+    if top_k < MIN_TOP_K:
+        raise exc(
+            f"top_k must be >= {MIN_TOP_K} (got {top_k}): a single-candidate "
+            "distribution has zero entropy and encodes no bits."
+        )
+    if top_k > K:
+        raise exc(
+            f"top_k must be <= {K} (got {top_k}): the rank-interval schedule defines "
+            f"exactly {K} intervals, so more candidates than that cannot be coded."
+        )
+
+
 # Gap (in logit units) below which adjacent sorted tokens merge into one run.
 # Must be >> the cross-platform logit divergence (~3e-5 measured CPU<->GPU);
 # 1e-3 is ~35x that margin. Tunable; see the design spec.
