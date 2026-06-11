@@ -41,17 +41,20 @@ cover text decodable.
 | Mode | Shares out of band | How Bob recovers the opener |
 |---|---|---|
 | **A — Auto topic** | nothing | recovered from text via public codebook match |
-| **B — Shared topic key** | one word | re-derived from the shared word |
 | **C — Full custom prompt** | a sentence | known directly (it *is* the shared prompt) |
 
-## Key insight: one opener, three sources
+A third middle point — **Mode B (shared topic key)**, a short shared word
+expanded deterministically into an opener — is **deferred** (see "NOT in
+scope"). It is thin sugar over Mode C and earns its API surface only if demand
+appears.
 
-In every mode the visible cover text is `opener + generated_text`, and the model
-conditions on exactly that same `opener` string. The **only** thing that differs
-across modes is how the *decoder* obtains the opener:
+## Key insight: one opener, two sources
+
+In both modes the visible cover text is `opener + generated_text`, and the model
+conditions on exactly that same `opener` string. The opener is **always
+prepended**. The **only** thing that differs is how the *decoder* obtains it:
 
 - **Mode A:** longest-prefix match against the public codebook (`match_seed`).
-- **Mode B:** `derive_opener(topic_key)` — both sides compute the same string.
 - **Mode C:** it is the configured `prompt=`.
 
 Stripping is always a **byte-exact string split**, never a tokenization guess:
@@ -75,7 +78,8 @@ TOPICS: dict[str, tuple[str, ...]] = {
     "travel":   (...),
     "science":  (...),
     "personal": (...),
-    "business": (...),
+    "work":     (...),
+    "sports":   (...),
 }
 ALL_PHRASES: tuple[str, ...] = tuple(p for ps in TOPICS.values() for p in ps)
 ```
@@ -97,53 +101,35 @@ API:
   `ALL_PHRASES` as before. Unknown `topic` → `ValueError` listing valid topics.
 - `match_seed(cover_text) -> tuple[str, str]` — unchanged; matches the union, so
   **decode never needs the topic.**
-- `derive_opener(keyword: str) -> str` — deterministic: if `keyword` is a topic
-  name, pick from that topic via `sha256(keyword)`; otherwise pick from
-  `ALL_PHRASES` via `sha256(keyword)`. Pure hashlib + string ops → platform
-  stable. Both Alice and Bob compute the identical opener.
 - `list_topics() -> tuple[str, ...]`.
 
 ### 2. Codec mode resolution (`codec.py`)
 
-Constructor gains `topic: str | None = None`, `topic_key: str | None = None`,
-and `prepend_prompt: bool = True`. Mode is resolved with **conflicts raising
-`ValueError`** (no silent precedence):
+Constructor gains `topic: str | None = None`. The opener is always prepended;
+there is no opt-out. Mode is resolved with **conflicts raising `ValueError`** (no
+silent precedence):
 
-- `prompt` set together with `topic` or `topic_key` → error.
-- `topic` set together with `topic_key` → error.
-- Otherwise: `prompt` → Mode C; `topic_key` → Mode B; else → Mode A (optional
-  `topic`).
+- `prompt` set together with `topic` → error.
+- Otherwise: `prompt` → Mode C; else → Mode A (optional `topic`).
 
 `encode` builds the opener per mode, then:
 
 ```
-opener_context = <phrase | derive_opener(topic_key) | prompt>
+opener_context = <phrase | prompt>
 cover = _encode(data, prompt=opener_context, ...)
-return (opener_context + cover) if prepend else cover
+return opener_context + cover
 ```
 
 `decode` recovers `opener_context` per mode and strips it before decoding:
 
 - **Mode A:** `opener, remainder = match_seed(cover_text)`; decode `remainder`
   with `prompt=opener`.
-- **Mode B:** `opener = derive_opener(topic_key)`; require
-  `cover_text.startswith(opener)` (else `StegoDecodeError`); strip and decode
-  with `prompt=opener`.
-- **Mode C:** `opener = prompt`. If `prepend_prompt`, require/strip the prefix;
-  decode `remainder` with `prompt=opener`. If `prepend_prompt=False`, decode
-  `cover_text` directly with `prompt=opener` (today's behavior preserved).
+- **Mode C:** `opener = prompt`; require `cover_text.startswith(opener)` (else
+  `StegoDecodeError`); strip and decode `remainder` with `prompt=opener`.
 
-`prepend_prompt` is part of the shared out-of-band config, exactly like `prompt`,
-`top_k`, and `temperature`: Bob must set it to match Alice. Default `True` so all
-three modes show a themed opener by default.
-
-**`prepend_prompt` applies only to Modes B and C.** Mode A *requires* the opener
-in the text (that is how the decoder recovers it with zero coordination), so the
-opener is always prepended in Mode A; setting `prepend_prompt=False` together
-with Mode A raises `ValueError`. In Mode B with `prepend_prompt=False` the opener
-is derived by both sides and used purely as hidden context (not shown); in Mode C
-with `prepend_prompt=False` the prompt stays hidden context, preserving 0.3.x
-behavior.
+**Behavior change vs. 0.3.x:** explicit `prompt=` now always prepends the prompt
+to the visible cover text (0.3.x did not). Round-trip is preserved; the output
+string differs. There is no non-prepend escape hatch.
 
 **Chunked mode unchanged in spirit:** only the first chunk gets an opener;
 continuation chunks condition on the tail of the previous cover text
@@ -151,13 +137,11 @@ continuation chunks condition on the tail of the previous cover text
 
 ### 3. CLI (`cli.py`)
 
-- New global-style options on `encode`/`decode`: `--topic NAME`,
-  `--topic-key WORD`. `--prompt` already exists for Mode C. A
-  `--no-prepend-prompt` flag maps to `prepend_prompt=False`.
+- New global-style option on `encode`: `--topic NAME`. `--prompt` already exists
+  for Mode C.
 - New `topics` subcommand mirroring `models`, listing topic names and an example
   opener from each.
-- Decode in Mode A needs no new flag. Mode B decode requires `--topic-key`.
-  Mode C decode uses `--prompt` (+ matching `--no-prepend-prompt` if used).
+- Decode in Mode A needs no new flag. Mode C decode uses `--prompt`.
 
 ### 4. Cover-story quality guidance (docs, not code)
 
@@ -176,19 +160,22 @@ a plausible opening plus vaguely on-topic prose, not a rigorous document.
 
 - Hardened adversary (Eve has the library and suspects stego). Served
   separately by `password=`; the codebook fingerprint is accepted here.
+- **Mode B (shared topic key / `derive_opener`).** Deferred — thin sugar over
+  Mode C.
 - Private / user-extensible codebooks loaded by name (was Option 2). Deferred.
 - Per-call `topic=` override on `encode()` — constructor-level only for v1.
-- Statistical indistinguishability of the chosen-token distribution.
+- Statistical indistinguishability of the chosen-token distribution. This is the
+  subject of a **separate planned pass** (bitstream whitening / encryption by
+  default); see "Interaction with the planned whitening pass" below.
 
 ## Testing & invariants
 
 - Global prefix-free invariant over `ALL_PHRASES` (dedicated test, not only the
   import-time assertion).
-- Unknown-topic → `ValueError`; conflicting mode args → `ValueError`.
-- Round-trip per mode: every topic in Mode A; a shared key in Mode B; Mode C
-  with `prepend_prompt` both `True` and `False`.
-- `derive_opener` determinism (same keyword → same opener; stable string).
-- Mode-B/C strip correctness: `cover_text[:len(opener)] == opener`, and a
+- Unknown-topic → `ValueError`; conflicting mode args (`prompt` + `topic`) →
+  `ValueError`.
+- Round-trip per mode: every topic in Mode A; Mode C with an explicit prompt.
+- Mode-C strip correctness: `cover_text[:len(opener)] == opener`, and a
   mismatched prefix raises `StegoDecodeError` (fails closed).
 - **Golden-vector decode regression still passes** — guaranteed by preserving
   all existing phrase strings.
@@ -199,10 +186,36 @@ a plausible opening plus vaguely on-topic prose, not a rigorous document.
 ## Compatibility
 
 - **Decode:** 0.3.x cover text decodes unchanged (phrases preserved, union
-  prefix-free).
+  prefix-free). **Note:** the planned whitening pass (below) will change the
+  bitstream format and supersede this guarantee.
 - **Encode (default/Mode A):** the opener chosen for a given message may differ
   from 0.3.x once phrases are regrouped — acceptable pre-1.0; golden vectors
   regenerated.
-- **Mode C (`prompt=`):** default now prepends the prompt, changing the output
-  string vs. 0.3.x. Opt out with `prepend_prompt=False` to recover prior output.
-  Round-trip is preserved either way as long as Bob matches the flag.
+- **Mode C (`prompt=`):** now always prepends the prompt, changing the output
+  string vs. 0.3.x. No opt-out. Round-trip is preserved.
+
+## Interaction with the planned whitening / encryption-by-default pass
+
+A follow-up pass (its own spec) will address review observation #2 — that a
+fixed-magic header and plaintext payload make the *chosen-token distribution*
+deviate from the model's natural sampling, which is detectable by an adversary
+who runs the model. That pass is **orthogonal** to this design with one
+exception, recorded here so the two do not conflict:
+
+- **No conflict** with the opener/prepend mechanism: whitening operates on the
+  header+payload *bits before arithmetic coding*; the opener is a *string* prefix
+  on the cover text. Independent layers.
+- **No conflict** with Mode A zero-coordination — *provided* whitening is
+  **keyless** (a deterministic, reversible scramble), not a mandatory password.
+  Mandatory keyed encryption would require a shared secret and break Mode A's
+  "shares nothing" premise, so it must stay opt-in. Keyless whitening buys
+  *indistinguishability*, not *confidentiality*; the password layer remains the
+  only source of confidentiality and is inherently opt-in.
+- **The header must be whitened too**, not just the payload — today's `password=`
+  encrypts only the payload, leaving the fixed magic/length/CRC header
+  detectable. This is the substance of observation #2 and belongs to that pass.
+- **The one real conflict** is the *decode-compat guarantee* above: changing the
+  default bitstream means 0.4.x (or whenever it lands) will not decode 0.3.x
+  text. That pass must own this decision (drop the guarantee, or gate on a
+  format-version field). This spec ships first and keeps decode-compat; the
+  whitening pass knowingly supersedes it.
