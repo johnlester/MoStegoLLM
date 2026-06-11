@@ -264,6 +264,14 @@ def main(argv: list[str] | None = None) -> None:
     # after the subcommand); resolve real defaults here.
     verbose = getattr(args, "verbose", False)
     quiet = getattr(args, "quiet", False)
+
+    if quiet:
+        # transformers writes weight-loading progress bars to stderr; --quiet
+        # promises a silent stderr, so turn them off before the model loads.
+        from transformers.utils import logging as hf_logging
+
+        hf_logging.disable_progress_bar()
+        hf_logging.set_verbosity_error()
     model_name = getattr(args, "model", PRIMARY_MODEL)
     device = getattr(args, "device", "auto")
     top_k = getattr(args, "top_k", TOP_K)
