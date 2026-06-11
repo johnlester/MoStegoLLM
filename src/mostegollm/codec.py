@@ -9,7 +9,7 @@ from .crypto import decrypt as _decrypt, encrypt as _encrypt
 from .decoder import decode as _decode
 from .encoder import TOP_K, encode as _encode
 from .model import DEFAULT_PROMPT, PRIMARY_MODEL, ModelInfo, get_model_info, list_models, load_model
-from .seeds import match_seed, select_seed
+from .seeds import list_topics, match_seed, select_seed
 from .utils import (
     StegoDecodeError,
     StegoStats,
@@ -57,6 +57,7 @@ class StegoCodec:
         model_name: str = PRIMARY_MODEL,
         device: str = "auto",
         prompt: str = DEFAULT_PROMPT,
+        topic: str | None = None,
         top_k: int = TOP_K,
         temperature: float = 1.0,
         sentence_boundary: bool = False,
@@ -66,6 +67,17 @@ class StegoCodec:
         self._model_name = model_name
         self._device_str = device
         self._prompt = prompt
+        if topic is not None:
+            if prompt:
+                raise ValueError(
+                    "topic and prompt are mutually exclusive: a custom prompt is "
+                    "its own opener, so a topic would be ignored."
+                )
+            if topic not in list_topics():
+                raise ValueError(
+                    f"Unknown topic {topic!r}. Valid topics: {', '.join(list_topics())}"
+                )
+        self._topic = topic
         self._top_k = top_k
         self._temperature = temperature
         self._sentence_boundary = sentence_boundary
@@ -141,8 +153,7 @@ class StegoCodec:
         if chunk_size is not None:
             return self._encode_chunked(data, chunk_size=chunk_size, context_size=context_size)
 
-        seed = select_seed(data) if not self._prompt else ""
-        prompt = self._prompt or seed
+        opener = self._prompt if self._prompt else select_seed(data, self._topic)
 
         if self._password is not None:
             data = _encrypt(data, self._password)
@@ -152,12 +163,12 @@ class StegoCodec:
             model=model,
             tokenizer=tokenizer,
             device=device,
-            prompt=prompt,
+            prompt=opener,
             top_k=self._top_k,
             temperature=self._temperature,
             sentence_boundary=self._sentence_boundary,
         )
-        return seed + cover_text
+        return opener + cover_text
 
     def decode(
         self,
@@ -184,16 +195,23 @@ class StegoCodec:
         if isinstance(cover_text, list):
             return self._decode_chunked(cover_text, context_size=context_size)
 
-        # If using seed phrases (no custom prompt), extract the seed from the
-        # cover text prefix to reconstruct the prompt used during encoding.
+        # Recover the opener and strip it: by codebook match (Mode A) or by the
+        # known prompt prefix (Mode C). Both are byte-exact string splits.
         if not self._prompt:
             try:
-                seed, cover_text = match_seed(cover_text)
+                opener, cover_text = match_seed(cover_text)
             except ValueError as exc:
                 raise StegoDecodeError(str(exc)) from exc
-            prompt = seed
         else:
-            prompt = self._prompt
+            opener = self._prompt
+            if not cover_text.startswith(opener):
+                raise StegoDecodeError(
+                    "Cover text does not start with the configured prompt. "
+                    "The wrong prompt was supplied, or the text was not produced "
+                    "by this prompt."
+                )
+            cover_text = cover_text[len(opener) :]
+        prompt = opener
 
         model, tokenizer, device = self._ensure_model()
         payload = _decode(
@@ -342,8 +360,7 @@ class StegoCodec:
             encoding statistics.
         """
         original_size = len(data)
-        seed = select_seed(data) if not self._prompt else ""
-        prompt = self._prompt or seed
+        opener = self._prompt if self._prompt else select_seed(data, self._topic)
         if self._password is not None:
             data = _encrypt(data, self._password)
         model, tokenizer, device = self._ensure_model()
@@ -353,12 +370,12 @@ class StegoCodec:
             model=model,
             tokenizer=tokenizer,
             device=device,
-            prompt=prompt,
+            prompt=opener,
             top_k=self._top_k,
             temperature=self._temperature,
             sentence_boundary=self._sentence_boundary,
         )
-        cover_text = seed + cover_text
+        cover_text = opener + cover_text
         total_tokens = len(token_ids)
         bits_per_token = total_bits / total_tokens if total_tokens > 0 else 0.0
 
