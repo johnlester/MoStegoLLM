@@ -70,3 +70,18 @@ class TestModeConflict:
     def test_unknown_topic_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown topic"):
             StegoCodec(device="cpu", topic="not-a-topic")
+
+
+class TestChunkedModes:
+    def test_topic_chunked_roundtrip(self, codec_topic: StegoCodec) -> None:
+        data = b"A" * 60 + b"B" * 60
+        covers = codec_topic.encode(data, chunk_size=60)
+        assert isinstance(covers, list) and len(covers) == 2
+        assert covers[0].startswith(tuple(TOPICS["cooking"]))
+        assert codec_topic.decode(covers) == data
+
+    def test_custom_prompt_chunked_roundtrip(self, codec_alt_prompt: StegoCodec) -> None:
+        data = b"X" * 60 + b"Y" * 60
+        covers = codec_alt_prompt.encode(data, chunk_size=60)
+        assert covers[0].startswith("Once upon a time in a faraway land,")
+        assert codec_alt_prompt.decode(covers) == data

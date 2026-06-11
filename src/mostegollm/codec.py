@@ -288,12 +288,12 @@ class StegoCodec:
         cover_texts: list[str] = []
         for idx, chunk in enumerate(chunks):
             if idx == 0:
-                seed = select_seed(data) if not self._prompt else ""
-                prompt = self._prompt or seed
+                opener = self._prompt if self._prompt else select_seed(data, self._topic)
+                prompt = opener
+                prefix = opener
             else:
-                prev = cover_texts[idx - 1]
-                seed = ""
-                prompt = prev[-context_size:]
+                prompt = cover_texts[idx - 1][-context_size:]
+                prefix = ""
 
             cover_text, _ids, _bits = _encode(
                 chunk,
@@ -305,7 +305,7 @@ class StegoCodec:
                 temperature=self._temperature,
                 sentence_boundary=self._sentence_boundary,
             )
-            cover_texts.append(seed + cover_text)
+            cover_texts.append(prefix + cover_text)
 
         return cover_texts
 
@@ -323,15 +323,19 @@ class StegoCodec:
             if idx == 0:
                 if not self._prompt:
                     try:
-                        seed, cover_text = match_seed(cover_text)
+                        opener, cover_text = match_seed(cover_text)
                     except ValueError as exc:
                         raise StegoDecodeError(str(exc)) from exc
-                    prompt = seed
                 else:
-                    prompt = self._prompt
+                    opener = self._prompt
+                    if not cover_text.startswith(opener):
+                        raise StegoDecodeError(
+                            "Cover text does not start with the configured prompt."
+                        )
+                    cover_text = cover_text[len(opener) :]
+                prompt = opener
             else:
-                prev = cover_texts[idx - 1]
-                prompt = prev[-context_size:]
+                prompt = cover_texts[idx - 1][-context_size:]
 
             payload = _decode(
                 cover_text,
