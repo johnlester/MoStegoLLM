@@ -275,26 +275,110 @@ SEED_PHRASES: tuple[str, ...] = (
     "The morning sun revealed",
 )
 
+# New themed topics. Openers are multi-sentence lead-ins that anchor a cover
+# story harder than a single clause. They must stay globally prefix-free with
+# every phrase in SEED_PHRASES and with each other (enforced below).
+_COOKING: tuple[str, ...] = (
+    "Last weekend I finally tried making fresh pasta from scratch. The kitchen was a mess, but it was worth every minute.",
+    "There's a small trick to caramelizing onions that nobody tells you about. Patience, and a splash of water when they start to stick.",
+    "My grandmother kept her best recipes in a battered notebook. I've been slowly cooking my way through every page.",
+    "If you've never roasted a whole head of garlic, you're missing out. It turns sweet and spreadable, like butter.",
+    "The secret to a good weeknight curry is toasting the spices first. Everything else is just simmering and waiting.",
+)
+
+_TRAVEL: tuple[str, ...] = (
+    "We landed in a town whose name I still can't pronounce. By the second morning it already felt like somewhere I'd lived for years.",
+    "The train wound along the coast for hours without a single tunnel. I didn't open my book once.",
+    "Nobody warns you that the best meals abroad are found down the narrowest alleys. We followed the smell of bread and got lucky.",
+    "I packed for two weeks and ended up wearing the same three shirts. Travel has a way of simplifying things.",
+    "The mountain pass was closed when we arrived, so we changed plans entirely. That detour turned into the best part of the trip.",
+)
+
+_SCIENCE: tuple[str, ...] = (
+    "Researchers have spent decades arguing about how migratory birds find their way. The latest answer involves quantum effects in the eye.",
+    "Every cell in your body runs on a molecular battery older than complex life itself. It's a design nature settled on billions of years ago.",
+    "The more we map the deep ocean, the stranger it gets down there. Whole ecosystems thrive with no sunlight at all.",
+    "A single teaspoon of soil holds more living organisms than there are people on Earth. Most of them we've never named.",
+    "Light from the most distant galaxies left before the Sun existed. When we look up, we're really looking backward in time.",
+)
+
+_PERSONAL: tuple[str, ...] = (
+    "I've been keeping a journal for about a year now. Reading the early entries back is like meeting a slightly different person.",
+    "It took me a long time to learn how to say no without guilt. I'm still not great at it, but I'm getting there.",
+    "My father rarely gave advice, but the little he did has stuck with me. Most of it I only understood much later.",
+    "Some mornings I wake up certain of everything, and by noon I've changed my mind twice. I've stopped fighting it.",
+    "I used to think confidence was something you either had or didn't. Now I suspect it's just practice wearing a disguise.",
+)
+
+_WORK: tuple[str, ...] = (
+    "The project looked impossible on the whiteboard that first Monday. Three months later it shipped, mostly in one piece.",
+    "Half of every meeting I sit through could have been a single short message. The other half, oddly, are the ones that matter most.",
+    "I learned more from the deadline we missed than from any we hit. Failure leaves better notes.",
+    "Our team finally agreed to write things down instead of remembering them. Productivity quietly doubled.",
+    "The hardest part of any new role isn't the work itself. It's figuring out who actually makes the decisions.",
+)
+
+_SPORTS: tuple[str, ...] = (
+    "The match was already lost by halftime, or so everyone thought. What happened in the second half is still talked about.",
+    "I started running to clear my head, not to compete with anyone. Somewhere around the third month that changed.",
+    "There's a particular silence in a stadium right before a penalty kick. Forty thousand people holding one breath.",
+    "My coach used to say defense is just patience with a plan. It took me years on the court to understand him.",
+    "The rookie nobody had heard of stole the whole season. By spring his jersey was sold out everywhere.",
+)
+
+# Topic registry. "general" is the legacy 256-phrase set, preserved verbatim so
+# cover text from earlier versions still matches and decodes.
+TOPICS: dict[str, tuple[str, ...]] = {
+    "general": SEED_PHRASES,
+    "cooking": _COOKING,
+    "travel": _TRAVEL,
+    "science": _SCIENCE,
+    "personal": _PERSONAL,
+    "work": _WORK,
+    "sports": _SPORTS,
+}
+
+# Flat union used for default selection and for decode-side matching.
+ALL_PHRASES: tuple[str, ...] = tuple(p for ps in TOPICS.values() for p in ps)
+
 # Pre-sort by length descending for unambiguous longest-prefix matching.
-_SORTED_PHRASES = sorted(SEED_PHRASES, key=len, reverse=True)
-
-# Validate no phrase is a prefix of another (required for unambiguous matching).
-for _i, _a in enumerate(SEED_PHRASES):
-    for _b in SEED_PHRASES[_i + 1 :]:
-        if _a.startswith(_b) or _b.startswith(_a):
-            raise ValueError(f"Seed phrase prefix collision: {_a!r} / {_b!r}")
-del _i, _a, _b  # Clean up module namespace
+_SORTED_PHRASES = sorted(ALL_PHRASES, key=len, reverse=True)
 
 
-def select_seed(data: bytes) -> str:
+def _validate_prefix_free(phrases: tuple[str, ...]) -> None:
+    """Raise ValueError if any phrase is a prefix of another (ambiguous matching)."""
+    for i, a in enumerate(phrases):
+        for b in phrases[i + 1 :]:
+            if a.startswith(b) or b.startswith(a):
+                raise ValueError(f"Seed phrase prefix collision: {a!r} / {b!r}")
+
+
+# Enforce the invariant over the whole union at import time.
+_validate_prefix_free(ALL_PHRASES)
+
+
+def list_topics() -> tuple[str, ...]:
+    """Return the available topic names (for Mode A cover-story selection)."""
+    return tuple(TOPICS)
+
+
+def select_seed(data: bytes, topic: str | None = None) -> str:
     """Pick a seed phrase deterministically from the SHA-256 hash of *data*.
 
     Args:
         data: The payload bytes to hash.
+        topic: If given, choose from that topic's phrases; otherwise choose from
+            the full union of all topics. Unknown topic raises ``ValueError``.
     """
+    if topic is None:
+        phrases = ALL_PHRASES
+    else:
+        phrases = TOPICS.get(topic)
+        if phrases is None:
+            raise ValueError(f"Unknown topic {topic!r}. Valid topics: {', '.join(TOPICS)}")
     h = hashlib.sha256(data).digest()
-    idx = int.from_bytes(h[:2], "big") % len(SEED_PHRASES)
-    return SEED_PHRASES[idx]
+    idx = int.from_bytes(h[:2], "big") % len(phrases)
+    return phrases[idx]
 
 
 def match_seed(cover_text: str) -> tuple[str, str]:
