@@ -66,7 +66,10 @@ class TestChunkedEncoding:
             temp_codec._top_k = codec._top_k
             temp_codec._temperature = codec._temperature
             temp_codec._password = None
-            payload = temp_codec.decode(cover_text)
+            # Chunk 1+ prompts are hidden chained context. Public decode expects
+            # a non-empty prompt to prefix the text (prepended-opener contract),
+            # so reattach it; decode strips it and uses it as coding context.
+            payload = temp_codec.decode(cover_text if idx == 0 else prompt + cover_text)
             assert len(payload) <= chunk_size
 
     def test_str_chunked_roundtrip(self, codec: StegoCodec) -> None:

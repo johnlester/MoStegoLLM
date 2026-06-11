@@ -14,7 +14,7 @@ import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 from transformers.cache_utils import DynamicCache
 
-from .coding import HALF, K, PRECISION, QUARTER, WHOLE, step_coding
+from .coding import HALF, K, PRECISION, QUARTER, WHOLE, step_coding, validate_top_k
 from .utils import (
     StegoEncodeError,
     bytes_to_bits,
@@ -244,6 +244,7 @@ def encode(
         StegoEncodeError: If encoding fails.
     """
     warn_if_non_canonical_dtype(model)
+    validate_top_k(top_k, StegoEncodeError)
 
     # Prepend header to payload
     payload_crc = zlib.crc32(data) & 0xFFFFFFFF

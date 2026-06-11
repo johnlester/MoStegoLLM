@@ -12,7 +12,7 @@ import zlib
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-from .coding import HALF, QUARTER, WHOLE, step_coding
+from .coding import HALF, QUARTER, WHOLE, step_coding, validate_top_k
 from .encoder import (
     TOP_K,
     _filter_tokens,
@@ -64,6 +64,7 @@ def decode(
         StegoDecodeError: If decoding fails (bad header, token mismatch, etc.).
     """
     warn_if_non_canonical_dtype(model)
+    validate_top_k(top_k, StegoDecodeError)
 
     # Resolve token IDs for the cover text
     if token_ids is None:

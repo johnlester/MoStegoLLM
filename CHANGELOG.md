@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+- **Cover-story prompt modes.** Choose how the cover text reads:
+  - **Auto topic (Mode A, default):** pass `topic=` (or `--topic`) to select a
+    themed opener — `cooking`, `travel`, `science`, `personal`, `work`,
+    `sports`, or `general`. Zero coordination: the decoder recovers the opener
+    from the text. Run `mostegollm topics` to list them.
+  - **Custom prompt (Mode C):** pass `prompt=` to supply your own opener, shared
+    out of band with the recipient.
+- Multi-sentence themed openers for stronger cover-story anchoring.
+- `seeds.list_topics()` and a `topics` CLI subcommand.
+
+### Changed (breaking)
+- Explicit `prompt=` now **prepends** the prompt to the cover text (it was hidden
+  context before). Decode strips it. Round-trip is preserved; output strings
+  differ from 0.3.x. `topic=` and `prompt=` are mutually exclusive.
+
+### Compatibility
+- Cover text produced by 0.3.x still decodes (the legacy phrase set is preserved
+  as the `general` topic and the codebook stays globally prefix-free).
+
 ## 0.3.0
 
 ### Changed (breaking)

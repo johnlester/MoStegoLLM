@@ -102,3 +102,24 @@ class TestCLIModels:
         result = _run(["models"])
         assert result.returncode == 0
         assert "SmolLM" in result.stdout
+
+
+class TestCLITopics:
+    def test_topics_subcommand_lists_topics(self) -> None:
+        result = _run(["topics"])
+        assert result.returncode == 0
+        assert "cooking" in result.stdout
+        assert "science" in result.stdout
+
+    def test_encode_with_topic_roundtrips(self) -> None:
+        enc = _run(["encode", "--topic", "travel", "hi there"])
+        assert enc.returncode == 0
+        cover = enc.stdout
+        dec = _run(["decode", "--text"], input_text=cover)
+        assert dec.returncode == 0
+        assert dec.stdout.strip() == "hi there"
+
+    def test_encode_unknown_topic_errors(self) -> None:
+        result = _run(["encode", "--topic", "nonsense", "hi"])
+        assert result.returncode == 1
+        assert "topic" in result.stderr.lower()

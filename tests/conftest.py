@@ -46,3 +46,14 @@ def codec_encrypted(codec: StegoCodec) -> StegoCodec:
     c._tokenizer = tokenizer
     c._device = device
     return c
+
+
+@pytest.fixture(scope="session")
+def codec_topic(codec: StegoCodec) -> StegoCodec:
+    """Mode-A codec pinned to the 'cooking' topic, sharing the loaded model."""
+    c = StegoCodec(device="cpu", topic="cooking")
+    model, tokenizer, device = codec._ensure_model()
+    c._model = model
+    c._tokenizer = tokenizer
+    c._device = device
+    return c
