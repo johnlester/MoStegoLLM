@@ -75,10 +75,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     enc.add_argument("-p", "--password", default=None, help="encrypt payload with AES-256-GCM")
     enc.add_argument("--chunk-size", type=int, default=None, help="split into chunks of N bytes")
+    enc.add_argument(
+        "--topic", default=None, help="cover-story topic for the opener (see 'topics')"
+    )
     enc.add_argument("--stats", action="store_true", help="print encoding stats to stderr")
 
     # -- models --------------------------------------------------------
     sub.add_parser("models", help="list recommended models")
+
+    # -- topics --------------------------------------------------------
+    sub.add_parser("topics", help="list cover-story topics")
 
     # -- decode --------------------------------------------------------
     dec = sub.add_parser("decode", help="decode cover text back to secret data")
@@ -138,6 +144,20 @@ def _cmd_models() -> None:
     for m in models:
         gated = " [gated]" if m.gated else ""
         print(f"  {m.name:<{name_w}}  {m.parameters:<{param_w}}  {m.description}{gated}")
+
+
+def _cmd_topics() -> None:
+    """Print available cover-story topics with an example opener."""
+    from .seeds import TOPICS
+
+    name_w = max(len(name) for name in TOPICS)
+    print(f"  {'Topic':<{name_w}}  Example opener")
+    print("  " + "-" * (name_w + 16))
+    for name, phrases in TOPICS.items():
+        example = phrases[0]
+        if len(example) > 60:
+            example = example[:57] + "..."
+        print(f"  {name:<{name_w}}  {example}")
 
 
 def _cmd_encode(codec: StegoCodec, args: argparse.Namespace, verbose: bool, quiet: bool) -> None:
@@ -236,6 +256,10 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_models()
         return
 
+    if args.command == "topics":
+        _cmd_topics()
+        return
+
     # Global options use argparse.SUPPRESS defaults (so they work before or
     # after the subcommand); resolve real defaults here.
     verbose = getattr(args, "verbose", False)
@@ -260,14 +284,20 @@ def main(argv: list[str] | None = None) -> None:
     t_model = time.perf_counter()
     sentence_boundary = getattr(args, "sentence_boundary", False)
     password = getattr(args, "password", None)
-    codec = StegoCodec(
-        model_name=model_name,
-        device=device,
-        prompt=prompt,
-        top_k=top_k,
-        sentence_boundary=sentence_boundary,
-        password=password,
-    )
+    topic = getattr(args, "topic", None)
+    try:
+        codec = StegoCodec(
+            model_name=model_name,
+            device=device,
+            prompt=prompt,
+            topic=topic,
+            top_k=top_k,
+            sentence_boundary=sentence_boundary,
+            password=password,
+        )
+    except ValueError as exc:
+        print(f"mostegollm: {exc}", file=sys.stderr)
+        sys.exit(1)
     # Force model load so we can report timing
     _log("Loading model…", quiet=quiet)
     codec._ensure_model()
