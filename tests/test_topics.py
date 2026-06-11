@@ -49,13 +49,17 @@ def test_select_seed_from_topic_stays_in_topic() -> None:
         assert phrase in TOPICS["cooking"]
 
 
-def test_select_seed_default_uses_full_union() -> None:
+def test_select_seed_default_uses_general() -> None:
     phrase = select_seed(b"anything")
-    assert phrase in ALL_PHRASES
+    assert phrase in TOPICS["general"]
 
 
 def test_select_seed_is_deterministic() -> None:
-    assert select_seed(b"hello", topic="travel") == select_seed(b"hello", topic="travel")
+    # Pinned golden value: changing the hash slicing or topic order breaks this.
+    assert (
+        select_seed(b"hello", topic="travel")
+        == "The train wound along the coast for hours without a single tunnel. I didn't open my book once."
+    )
 
 
 def test_select_seed_unknown_topic_raises() -> None:

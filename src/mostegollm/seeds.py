@@ -358,7 +358,7 @@ _validate_prefix_free(ALL_PHRASES)
 
 
 def list_topics() -> tuple[str, ...]:
-    """Return the available topic names (for Mode A cover-story selection)."""
+    """Return the available topic names in the TOPICS registry."""
     return tuple(TOPICS)
 
 
@@ -367,11 +367,14 @@ def select_seed(data: bytes, topic: str | None = None) -> str:
 
     Args:
         data: The payload bytes to hash.
-        topic: If given, choose from that topic's phrases; otherwise choose from
-            the full union of all topics. Unknown topic raises ``ValueError``.
+        topic: If given, choose from that topic's phrases. When ``None`` (the
+            default), choose from the neutral ``general`` set — its 256 entries
+            give a uniform ``2**16 / 256`` selection and read plausibly for any
+            content. Themed openers are opt-in via an explicit topic. Unknown
+            topic raises ``ValueError``.
     """
     if topic is None:
-        phrases = ALL_PHRASES
+        phrases = TOPICS["general"]
     else:
         phrases = TOPICS.get(topic)
         if phrases is None:
